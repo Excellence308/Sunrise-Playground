@@ -11,6 +11,8 @@ void select_character(const middleware::web_service::Message& message, Outcome& 
 void mutate_equipment(const middleware::web_service::Message& message,
                       bool unequip,
                       Outcome& outcome) noexcept;
+void mutate_subclass_selection(const middleware::web_service::Message& message,
+                               Outcome& outcome) noexcept;
 void mutate_socket_plug(const middleware::web_service::Message& message, Outcome& outcome) noexcept;
 void mutate_equipped_socket_plug(const middleware::web_service::Message& message,
                                  Outcome& outcome) noexcept;

@@ -85,6 +85,17 @@ void report_item_state(std::string_view stage,
                        std::uint32_t afterFlags,
                        bool equipped,
                        std::size_t itemIndex) noexcept;
+void report_subclass_selection(std::string_view stage,
+                               std::string_view result,
+                               std::string_view reason,
+                               std::uint64_t characterSoid,
+                               std::uint64_t subclassInstanceSoid,
+                               std::uint16_t definitionIndex,
+                               std::uint16_t socketEntryListIndex,
+                               std::uint8_t requestedEntry,
+                               std::uint8_t selectedEntry,
+                               std::uint8_t selectedGroup,
+                               SubclassAbilityField field) noexcept;
 
 [[nodiscard]] bool
 same_profile_inventory(const AccountState& account,
@@ -127,6 +138,13 @@ find_resolved_position(const middleware::datagen::family4::loadout::ResolvedLoad
     CharacterState& after,
     std::size_t& movedItemCount) noexcept;
 [[nodiscard]] bool same_character(const CharacterState& left, const CharacterState& right) noexcept;
+[[nodiscard]] bool same_subclass_transition(const PendingSubclassSelection& left,
+                                            const PendingSubclassSelection& right) noexcept;
+[[nodiscard]] bool stage_subclass_selection(const AccountState& snapshot,
+                                            std::size_t characterIndex,
+                                            std::uint64_t subclassInstanceSoid,
+                                            std::uint8_t requestedEntry,
+                                            PendingSubclassSelection& mutation) noexcept;
 [[nodiscard]] bool stage_socket_plug(const AccountState& snapshot,
                                      std::size_t characterIndex,
                                      std::uint64_t targetInstanceSoid,
