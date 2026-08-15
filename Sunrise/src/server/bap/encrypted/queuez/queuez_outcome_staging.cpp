@@ -23,6 +23,7 @@ bool stage_service_outcome(Scratch& scratch,
     bool armsBannerRepush = false;
     std::uint64_t bannerRoot = 0;
     const auto* equipment = transaction_if<EquipmentSwapTransaction>(outcome);
+    const auto* subclass = transaction_if<SubclassSelectionTransaction>(outcome);
     const auto* itemState = transaction_if<ItemStateTransaction>(outcome);
     const auto* socket = transaction_if<SocketPlugTransaction>(outcome);
     const auto* itemAcquisition = transaction_if<ItemAcquisitionTransaction>(outcome);
@@ -104,6 +105,66 @@ bool stage_service_outcome(Scratch& scratch,
                 core::log::write(core::log::Channel::server,
                                  core::log::Level::warn,
                                  "ev=queuez stage=equip_roster result=fail");
+                return false;
+            }
+            after = refresh.after;
+        }
+    } else if (subclass != nullptr) {
+        // Body processing already staged the exact +1 revision promised by opcode 801. Publish a
+        // single upsert for the resident subclass instance, then refresh subscribed appearance
+        // copies because their ability banks are derived from the same character after-image.
+        const SubclassSelection& selection = subclass->update;
+        bool preservedManifest =
+            selection.after.family4ResidentCount == before.family4ResidentCount;
+        std::size_t targetMatches = 0;
+        for (std::size_t index = 0; preservedManifest && index < before.family4ResidentCount;
+             ++index) {
+            const ResidentObject& resident = before.family4Residents[index];
+            const ResidentObject& staged = selection.after.family4Residents[index];
+            preservedManifest = staged.objectSoid == resident.objectSoid
+                                && staged.definitionId == resident.definitionId;
+            targetMatches += static_cast<std::size_t>(
+                resident.objectSoid == selection.subclassInstanceSoid
+                && resident.definitionId == selection.itemInstanceDefinitionId);
+        }
+        if (!valid(selection.after) || !preservedManifest || targetMatches != 1
+            || selection.accountSoid != subclass->pending.accountSoid
+            || selection.characterSoid != subclass->pending.characterSoid
+            || selection.subclassInstanceSoid != subclass->pending.subclassInstanceSoid
+            || selection.after.family4RootSoid != before.family4RootSoid
+            || before.family4Version == (std::numeric_limits<std::int32_t>::max)()
+            || selection.after.family4Version != before.family4Version + 1
+            || !push::append_subclass_selection_notification(
+                scratch, selection, subclass->pending, key, nonce, response, written)) {
+            core::log::write(core::log::Channel::server,
+                             core::log::Level::warn,
+                             "ev=queuez stage=subclass_select result=fail");
+            return false;
+        }
+        middleware::secure_channel::advance_nonce(nonce);
+        after = selection.after;
+        if (after.family0Active) {
+            CharacterAppearanceRefresh refresh{};
+            if (!stage_character_appearance_refresh(
+                    after, subclass->pending.characterSoid, refresh)
+                || !push::append_subclass_appearance_refresh_notification(
+                    scratch, refresh, subclass->pending, key, nonce, response, written)) {
+                core::log::write(core::log::Channel::server,
+                                 core::log::Level::warn,
+                                 "ev=queuez stage=subclass_appearance result=fail");
+                return false;
+            }
+            after = refresh.after;
+        }
+        if (after.family3Active) {
+            RosterAppearanceRefresh refresh{};
+            if (!stage_roster_appearance_refresh(
+                    after, subclass->pending.characterSoid, false, refresh)
+                || !push::append_subclass_roster_refresh_notification(
+                    scratch, refresh, subclass->pending, key, nonce, response, written)) {
+                core::log::write(core::log::Channel::server,
+                                 core::log::Level::warn,
+                                 "ev=queuez stage=subclass_roster result=fail");
                 return false;
             }
             after = refresh.after;

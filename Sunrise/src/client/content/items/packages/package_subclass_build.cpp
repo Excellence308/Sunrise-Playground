@@ -9,6 +9,7 @@ namespace sunrise::client::content::items::packages {
 namespace {
 
 namespace domain = state::build_data::abilities;
+namespace lists = state::build_data::socket_entry_lists;
 
 /** The authored equipment slot that holds the subclass. */
 constexpr std::size_t kSubclassSlot =
@@ -58,6 +59,252 @@ constexpr std::size_t kSubclassSlot =
     return false;
 }
 
+/** @param rows Rows built so far. @return True when this subclass list was already expanded. */
+[[nodiscard]] bool held_list(std::span<const domain::Definition> rows,
+                             std::uint16_t socketEntryListIndex) noexcept {
+    for (const domain::Definition& existing : rows) {
+        if (existing.socketEntryListIndex == socketEntryListIndex) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/** One representative entry for every distinct plug source in one semantic ability group. */
+struct EntryChoices {
+    std::array<std::uint8_t, lists::kEntryCapacity> entries{};
+    std::size_t count{};
+};
+
+/** Collects canonical selectable alternatives from the group of one configured entry. */
+[[nodiscard]] bool choices_of(const lists::Definition& definition,
+                              const lists::EntryTable& table,
+                              std::uint8_t selected,
+                              EntryChoices& output) noexcept {
+    output = {};
+    if (selected >= definition.entryCount) {
+        return false;
+    }
+    const lists::Entry& current = table.entries[selected];
+    if (current.plugSource == lists::kNoPlugSource) {
+        if (current.kind != lists::kSuperEntryKind) {
+            return false;
+        }
+        output.entries[0] = selected;
+        output.count = 1;
+        return true;
+    }
+    if (current.group == lists::kNoEntryGroup) {
+        return false;
+    }
+
+    bool containsCurrentSource = false;
+    for (std::size_t entry = 0; entry < definition.entryCount; ++entry) {
+        const std::uint64_t bit = std::uint64_t{1} << entry;
+        const lists::Entry& candidate = table.entries[entry];
+        if ((definition.readyMask & bit) == 0 || candidate.group != current.group
+            || candidate.plugSource == lists::kNoPlugSource) {
+            continue;
+        }
+        bool duplicate = false;
+        for (std::size_t heldIndex = 0; heldIndex < output.count; ++heldIndex) {
+            duplicate = duplicate
+                        || table.entries[output.entries[heldIndex]].plugSource
+                               == candidate.plugSource;
+        }
+        if (!duplicate) {
+            if (output.count >= output.entries.size()) {
+                return false;
+            }
+            output.entries[output.count++] = static_cast<std::uint8_t>(entry);
+        }
+        containsCurrentSource = containsCurrentSource || candidate.plugSource == current.plugSource;
+    }
+    return output.count != 0 && containsCurrentSource;
+}
+
+/** Collects every authored representative of one already-selected plug source. */
+[[nodiscard]] bool representatives_of(const lists::Definition& definition,
+                                      const lists::EntryTable& table,
+                                      std::uint8_t selected,
+                                      EntryChoices& output) noexcept {
+    output = {};
+    if (selected >= definition.entryCount) {
+        return false;
+    }
+    const lists::Entry& current = table.entries[selected];
+    if (current.plugSource == lists::kNoPlugSource) {
+        if (current.kind != lists::kSuperEntryKind) {
+            return false;
+        }
+        output.entries[0] = selected;
+        output.count = 1;
+        return true;
+    }
+    if (current.group == lists::kNoEntryGroup) {
+        return false;
+    }
+    for (std::size_t entry = 0; entry < definition.entryCount; ++entry) {
+        const lists::Entry& candidate = table.entries[entry];
+        if ((definition.readyMask & (std::uint64_t{1} << entry)) == 0
+            || candidate.group != current.group
+            || candidate.plugSource != current.plugSource) {
+            continue;
+        }
+        if (output.count >= output.entries.size()) {
+            return false;
+        }
+        output.entries[output.count++] = static_cast<std::uint8_t>(entry);
+    }
+    return output.count != 0;
+}
+
+/** Resolves one plug-source combination through whichever authored representatives are valid. */
+[[nodiscard]] bool build_supported_row(const reader::Source& source,
+                                       reader::Scratch& scratch,
+                                       std::span<const std::byte> definitionBytes,
+                                       std::vector<std::byte>& blob,
+                                       const lists::Definition& definition,
+                                       const lists::EntryTable& table,
+                                       std::uint16_t socketEntryListIndex,
+                                       const domain::Selection& sourceSelection,
+                                       domain::Definition& output) noexcept {
+    const std::array<std::uint8_t, 5> selected{
+        sourceSelection.movementEntry,
+        sourceSelection.grenadeEntry,
+        sourceSelection.superEntry,
+        sourceSelection.meleeEntry,
+        sourceSelection.classEntry,
+    };
+    std::array<EntryChoices, 5> representatives{};
+    for (std::size_t field = 0; field < selected.size(); ++field) {
+        if (!representatives_of(definition, table, selected[field], representatives[field])) {
+            return false;
+        }
+    }
+
+    for (std::size_t movement = 0; movement < representatives[0].count; ++movement) {
+        for (std::size_t grenade = 0; grenade < representatives[1].count; ++grenade) {
+            for (std::size_t super = 0; super < representatives[2].count; ++super) {
+                for (std::size_t melee = 0; melee < representatives[3].count; ++melee) {
+                    for (std::size_t classAbility = 0;
+                         classAbility < representatives[4].count;
+                         ++classAbility) {
+                        domain::Definition candidate{};
+                        candidate.socketEntryListIndex = socketEntryListIndex;
+                        candidate.selection = {
+                            representatives[0].entries[movement],
+                            representatives[1].entries[grenade],
+                            representatives[2].entries[super],
+                            representatives[3].entries[melee],
+                            representatives[4].entries[classAbility],
+                        };
+                        if (build_ability_buckets(source,
+                                                  scratch,
+                                                  definitionBytes,
+                                                  blob,
+                                                  candidate.selection,
+                                                  candidate)) {
+                            output = candidate;
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+/** Builds every cross-product selection the configured subclass exposes. */
+[[nodiscard]] bool build_subclass_abilities(
+    const reader::Source& source,
+    reader::Scratch& scratch,
+    std::span<const std::byte> definitionBytes,
+    std::vector<std::byte>& blob,
+    std::uint16_t socketEntryListIndex,
+    const domain::Selection& configured,
+    std::span<domain::Definition> output,
+    std::size_t& count) noexcept {
+    lists::Definition definition{};
+    lists::EntryTable table{};
+    if (!state::build_data::find_socket_entry_list(socketEntryListIndex, definition)
+        || !state::build_data::find_socket_entry_table(socketEntryListIndex, table)
+        || definition.definitionIndex != socketEntryListIndex
+        || table.definitionIndex != socketEntryListIndex) {
+        return false;
+    }
+
+    std::array<EntryChoices, 5> choices{};
+    const std::array<std::uint8_t, 5> selected{
+        configured.movementEntry,
+        configured.grenadeEntry,
+        configured.superEntry,
+        configured.meleeEntry,
+        configured.classEntry,
+    };
+    for (std::size_t field = 0; field < selected.size(); ++field) {
+        if (!choices_of(definition, table, selected[field], choices[field])) {
+            return false;
+        }
+    }
+    // Movement, grenade, melee path and class ability must be independent groups. Super is the
+    // one source-less lane and is deliberately excluded from this check.
+    const std::array<std::size_t, 4> selectable{0, 1, 3, 4};
+    for (std::size_t field = 0; field < selectable.size(); ++field) {
+        const std::uint8_t group = table.entries[selected[selectable[field]]].group;
+        if (group == lists::kNoEntryGroup) {
+            return false;
+        }
+        for (std::size_t other = field + 1; other < selectable.size(); ++other) {
+            if (group == table.entries[selected[selectable[other]]].group) {
+                return false;
+            }
+        }
+    }
+
+    for (std::size_t movement = 0; movement < choices[0].count; ++movement) {
+        for (std::size_t grenade = 0; grenade < choices[1].count; ++grenade) {
+            for (std::size_t super = 0; super < choices[2].count; ++super) {
+                for (std::size_t melee = 0; melee < choices[3].count; ++melee) {
+                    for (std::size_t classAbility = 0; classAbility < choices[4].count;
+                         ++classAbility) {
+                        domain::Definition row{};
+                        row.socketEntryListIndex = socketEntryListIndex;
+                        row.selection = {
+                            choices[0].entries[movement],
+                            choices[1].entries[grenade],
+                            choices[2].entries[super],
+                            choices[3].entries[melee],
+                            choices[4].entries[classAbility],
+                        };
+                        if (count >= output.size()) {
+                            return false;
+                        }
+                        // A shared plug source can span several authored nodes. Its first node is
+                        // not necessarily the one the character summary uses, so resolve the
+                        // representative from the installed selector chains instead of assuming.
+                        if (!build_supported_row(source,
+                                                 scratch,
+                                                 definitionBytes,
+                                                 blob,
+                                                 definition,
+                                                 table,
+                                                 socketEntryListIndex,
+                                                 row.selection,
+                                                 row)
+                            || held(output.first(count), row)) {
+                            continue;
+                        }
+                        output[count++] = row;
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+
 /** @param character Authored character. @return Its 5 selected socket entries. */
 [[nodiscard]] domain::Selection selection_of(const state::CharacterState& character) noexcept {
     return {character.movementAbilityEntry,
@@ -69,7 +316,7 @@ constexpr std::size_t kSubclassSlot =
 
 } // namespace
 
-/** Builds one ability bucket row per distinct subclass and ability selection in use. */
+/** Builds every ability combination for each distinct configured subclass. */
 bool build_character_abilities(const reader::Source& source,
                                reader::Scratch& scratch,
                                std::span<const std::byte> root,
@@ -106,34 +353,40 @@ bool build_character_abilities(const reader::Source& source,
                 subclassReason, character, subclass.has_value() ? subclass->definitionHash : 0, 0);
             continue;
         }
-        // The selection is held in a local because the row it also keys is the build's output.
-        const domain::Selection selection = selection_of(account.characters[character]);
-        row.selection = selection;
-        if (held(output.first(count), row)) {
+        const std::uint16_t socketEntryListIndex = row.socketEntryListIndex;
+        if (held_list(output.first(count), socketEntryListIndex)) {
             continue;
         }
         tables::IndexRow indexRow{};
-        if (!tables::index_row(
-                std::span<const std::byte>{table}, rows, row.socketEntryListIndex, indexRow)
+        if (!tables::index_row(std::span<const std::byte>{table},
+                               rows,
+                               socketEntryListIndex,
+                               indexRow)
             || indexRow.targetTag == 0) {
-            report_ability_failure("index_row", character, row.socketEntryListIndex, rows.count);
+            report_ability_failure("index_row", character, socketEntryListIndex, rows.count);
             continue;
         }
         if (!reader::read_tag(source, scratch, indexRow.targetTag, definition)) {
             report_ability_failure(
-                "definition_read", character, row.socketEntryListIndex, indexRow.targetTag);
+                "definition_read", character, socketEntryListIndex, indexRow.targetTag);
             continue;
         }
-        if (!build_ability_buckets(
-                source, scratch, std::span<const std::byte>{definition}, blob, selection, row)) {
+        const domain::Selection selection = selection_of(account.characters[character]);
+        if (!build_subclass_abilities(source,
+                                      scratch,
+                                      std::span<const std::byte>{definition},
+                                      blob,
+                                      socketEntryListIndex,
+                                      selection,
+                                      output,
+                                      count)) {
             const std::size_t packedSelection =
                 selection.movementEntry | (selection.grenadeEntry << 8U)
                 | (selection.superEntry << 16U) | (selection.meleeEntry << 24U);
             report_ability_failure(
-                "bucket_build", character, row.socketEntryListIndex, packedSelection);
+                "bucket_build", character, socketEntryListIndex, packedSelection);
             continue;
         }
-        output[count++] = row;
     }
     if (count == 0) {
         report_ability_failure("empty", account.characterCount, rows.count, output.size());

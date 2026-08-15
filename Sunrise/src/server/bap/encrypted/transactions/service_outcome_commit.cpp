@@ -62,6 +62,14 @@ bool commit(ServiceOutcome& outcome, Publication& publication) noexcept {
                                    : "ev=equip stage=transaction_commit result=fail");
         return committed;
     }
+    if (auto* transaction = transaction_if<SubclassSelectionTransaction>(outcome)) {
+        const bool committed = state::commit_subclass_selection(transaction->pending);
+        core::log::write(core::log::Channel::server,
+                         committed ? core::log::Level::debug : core::log::Level::warn,
+                         committed ? "ev=subclass_select stage=transaction_commit result=ok"
+                                   : "ev=subclass_select stage=transaction_commit result=fail");
+        return committed;
+    }
     if (auto* transaction = transaction_if<ItemAcquisitionTransaction>(outcome)) {
         const bool committed = state::commit_item_acquisition(transaction->pending);
         core::log::write(core::log::Channel::server,

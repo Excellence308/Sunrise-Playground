@@ -97,6 +97,11 @@ struct CharacterState {
     std::uint8_t meleeAbilityEntry{kDefaultMeleeAbilityEntry};
     /** Socket entry naming the class ability this character has selected. */
     std::uint8_t classAbilityEntry{kDefaultClassAbilityEntry};
+    /**
+     * Runtime-only socket entries the player has selected at least once. Selected entries still
+     * publish active; this mask keeps a later inactive entry acquired instead of new/unclaimed.
+     */
+    std::uint64_t acquiredSubclassAbilityMask{};
     /** Authored loadout keyed only by stable semantic equipment slots. */
     account::inventory::Equipment equipment;
     /** Unequipped items routed into their installed character-inventory bucket ranges. */
