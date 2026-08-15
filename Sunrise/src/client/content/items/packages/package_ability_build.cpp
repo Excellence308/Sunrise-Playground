@@ -19,7 +19,7 @@ namespace domain = state::build_data::abilities;
 constexpr std::uint8_t kSprintEntry = 1;
 /** Number of socket entries the character sheet's summary selects. */
 constexpr std::size_t kSummaryEntryCount = 6;
-/** Entry kind of the super, which stays active without a plug source of its own. */
+/** Entry kind of the primary super, which stays active without a plug source of its own. */
 constexpr std::uint8_t kSuperKind = 34;
 /** A selector chain longer than this is a cycle, not a chain. */
 constexpr std::size_t kSelectorChainLimit = 8;
@@ -50,14 +50,7 @@ summary_entries(const domain::Selection& selection) noexcept {
             selection.meleeEntry};
 }
 
-/**
- * Reads one entry's pool records.
- * @param walk Subclass walk state.
- * @param entry Entry naming the pool.
- * @param subgroup Pool subgroup ordinal.
- * @param records Record storage.
- * @return The number of records read.
- */
+/** Reads one entry's selected pool variant. */
 [[nodiscard]] std::size_t records_of(const Walk& walk,
                                      const pool::Entry& entry,
                                      std::uint8_t subgroup,
@@ -70,14 +63,7 @@ summary_entries(const domain::Selection& selection) noexcept {
         std::span<const std::byte>{*walk.blob}, entry, subgroup, records);
 }
 
-/**
- * Follows one entry's selector chain to the bucket it lands in.
- * A record either names its destination bucket or links on to another entry, subgroup and element.
- * @param walk Subclass walk state.
- * @param entryIndex Entry the chain starts at.
- * @param bucket Receives the destination bucket.
- * @return True when the chain reaches a destination inside the bucket range.
- */
+/** Follows one entry's selector chain to the bucket it lands in. */
 [[nodiscard]] bool
 selector_destination(const Walk& walk, std::uint8_t entryIndex, std::uint8_t& bucket) noexcept {
     std::uint8_t subgroup = 0;
@@ -107,12 +93,7 @@ selector_destination(const Walk& walk, std::uint8_t entryIndex, std::uint8_t& bu
     return false;
 }
 
-/**
- * Chooses the active plug source of every entry group.
- * An entry group holds alternatives, and the summary selection names which one the character has.
- * @param walk Subclass walk state.
- * @param sources Receives one active plug source per group, keyed by group.
- */
+/** Chooses the active plug source of every entry group. */
 void chosen_sources(const Walk& walk, std::array<std::uint32_t, 256>& sources) noexcept {
     sources.fill(pool::kNoPlugSource);
     for (const std::uint8_t entryIndex : walk.selected) {
@@ -127,12 +108,7 @@ void chosen_sources(const Walk& walk, std::array<std::uint32_t, 256>& sources) n
     }
 }
 
-/**
- * Decides whether one entry contributes its pool's hashes.
- * @param entry Candidate entry.
- * @param sources Active plug source per group.
- * @return True when the entry is the group's active alternative, or is the super.
- */
+/** @return True when an entry contributes its selected pool variant. */
 [[nodiscard]] bool active(const pool::Entry& entry,
                           const std::array<std::uint32_t, 256>& sources) noexcept {
     if (entry.plugSource == pool::kNoPlugSource) {
@@ -141,35 +117,127 @@ void chosen_sources(const Walk& walk, std::array<std::uint32_t, 256>& sources) n
     return sources[entry.group] == entry.plugSource;
 }
 
-/**
- * Assigns each selected entry's bucket and the kind that bucket collects.
- * @param walk Subclass walk state.
- * @param output Receives the twelve bucket kinds.
- * @return True when every selected entry reaches a distinct bucket.
- */
-[[nodiscard]] bool assign_kinds(const Walk& walk, domain::Definition& output) noexcept {
+/** Assigns one selected entry's destination bucket, kind and item selector. */
+[[nodiscard]] bool
+assign_selected(const Walk& walk, std::uint8_t entryIndex, domain::Definition& output) noexcept {
+    if (entryIndex >= walk.entryCount) {
+        return false;
+    }
+    std::array<pool::PoolRecord, pool::kPoolRecordCapacity> records{};
+    std::uint8_t bucket = 0;
+    if (records_of(walk, walk.entries[entryIndex], 0, records) == 0
+        || records[0].kind == pool::kEmptyByte || !selector_destination(walk, entryIndex, bucket)
+        || output.buckets[bucket].kind != domain::kEmptyBucketKind) {
+        return false;
+    }
+    output.buckets[bucket].kind = records[0].kind;
+    output.selectorMask |= static_cast<std::uint16_t>(std::uint16_t{1} << bucket);
+    output.selectorEntries[bucket] = entryIndex;
+    return true;
+}
+
+/** Assigns every one of the six character-summary entries. */
+[[nodiscard]] bool assign_selected_entries(const Walk& walk, domain::Definition& output) noexcept {
     for (const std::uint8_t entryIndex : walk.selected) {
-        if (entryIndex >= walk.entryCount) {
+        if (!assign_selected(walk, entryIndex, output)) {
             return false;
         }
-        std::array<pool::PoolRecord, pool::kPoolRecordCapacity> records{};
-        std::uint8_t bucket = 0;
-        if (records_of(walk, walk.entries[entryIndex], 0, records) == 0
-            || records[0].kind == pool::kEmptyByte
-            || !selector_destination(walk, entryIndex, bucket)
-            || output.buckets[bucket].kind != domain::kEmptyBucketKind) {
-            return false;
-        }
-        output.buckets[bucket].kind = records[0].kind;
     }
     return true;
 }
 
 /**
- * Files one pool record's hash into the bucket its category names, or into the overflow bank.
- * @param record Pool record carrying a definition hash.
- * @param output Row receiving the hash.
+ * Replaces the primary super selector when the active tree declares another kind for its lane.
+ * Later subclass trees keep the source-less primary super in the character summary, then expose
+ * their replacement through an active entry whose selector chain reaches the same destination.
  */
+[[nodiscard]] bool assign_active_super_selector(const Walk& walk,
+                                                const std::array<std::uint32_t, 256>& sources,
+                                                domain::Definition& output) noexcept {
+    const std::uint8_t primaryEntry = output.selection.superEntry;
+    std::uint8_t superBucket = 0;
+    if (primaryEntry >= walk.entryCount || !selector_destination(walk, primaryEntry, superBucket)) {
+        return false;
+    }
+    const std::uint8_t primaryKind = output.buckets[superBucket].kind;
+    std::uint8_t replacementEntry = pool::kEmptyByte;
+    std::uint8_t replacementKind = pool::kEmptyByte;
+    for (std::size_t entryIndex = 0; entryIndex < walk.entryCount; ++entryIndex) {
+        if (entryIndex == primaryEntry || !active(walk.entries[entryIndex], sources)) {
+            continue;
+        }
+        std::array<pool::PoolRecord, pool::kPoolRecordCapacity> records{};
+        if (records_of(walk, walk.entries[entryIndex], 0, records) == 0
+            || records[0].kind == pool::kEmptyByte || records[0].kind == primaryKind) {
+            continue;
+        }
+        std::uint8_t destination = 0;
+        if (!selector_destination(walk, static_cast<std::uint8_t>(entryIndex), destination)
+            || destination != superBucket) {
+            continue;
+        }
+        const auto candidateEntry = static_cast<std::uint8_t>(entryIndex);
+        if (replacementKind != pool::kEmptyByte
+            && (replacementKind != records[0].kind || replacementEntry != candidateEntry)) {
+            return false;
+        }
+        replacementEntry = candidateEntry;
+        replacementKind = records[0].kind;
+    }
+    if (replacementKind != pool::kEmptyByte) {
+        output.buckets[superBucket].kind = replacementKind;
+        output.selectorEntries[superBucket] = replacementEntry;
+    }
+    return true;
+}
+
+/** @return True when one already-assigned bucket claims a category. */
+[[nodiscard]] bool category_claimed(const domain::Definition& output,
+                                    std::uint8_t category) noexcept {
+    for (const domain::Bucket& bucket : output.buckets) {
+        if (bucket.kind == category) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Adds authored destination lanes exposed only by the active tree's records.
+ * Some later subclass trees publish supplemental lanes alongside their replacement super. A valid
+ * hash record supplies both the bucket category and its destination, so no class, tree, entry or
+ * ability hash is hardcoded here.
+ */
+void assign_active_destinations(const Walk& walk,
+                                const std::array<std::uint32_t, 256>& sources,
+                                domain::Definition& output) noexcept {
+    for (std::size_t entryIndex = 0; entryIndex < walk.entryCount; ++entryIndex) {
+        if (!active(walk.entries[entryIndex], sources)) {
+            continue;
+        }
+        std::array<pool::PoolRecord, pool::kPoolRecordCapacity> records{};
+        const std::size_t count = records_of(walk, walk.entries[entryIndex], 0, records);
+        for (std::size_t index = 0; index < count; ++index) {
+            const pool::PoolRecord& record = records[index];
+            if (record.definitionHash == pool::kNoPlugSource || record.category == pool::kEmptyByte
+                || record.destination == pool::kEmptyByte
+                || record.destination >= output.buckets.size()
+                || category_claimed(output, record.category)) {
+                continue;
+            }
+            domain::Bucket& bucket = output.buckets[record.destination];
+            if (bucket.kind != domain::kEmptyBucketKind) {
+                continue;
+            }
+            bucket.kind = record.category;
+            output.selectorMask |=
+                static_cast<std::uint16_t>(std::uint16_t{1} << record.destination);
+            output.selectorEntries[record.destination] = static_cast<std::uint8_t>(entryIndex);
+        }
+    }
+}
+
+/** Files one pool record's hash into the bucket its category names, or into overflow. */
 void file_hash(const pool::PoolRecord& record, domain::Definition& output) noexcept {
     if (record.definitionHash == pool::kNoPlugSource) {
         return;
@@ -189,7 +257,7 @@ void file_hash(const pool::PoolRecord& record, domain::Definition& output) noexc
 
 } // namespace
 
-/** Builds the ability buckets one subclass publishes under one ability selection. */
+/** Builds the ability buckets and item selectors one subclass publishes under one selection. */
 bool build_ability_buckets(const reader::Source& source,
                            reader::Scratch& scratch,
                            std::span<const std::byte> listDefinition,
@@ -209,14 +277,20 @@ bool build_ability_buckets(const reader::Source& source,
     for (domain::Bucket& bucket : output.buckets) {
         bucket = {};
     }
+    output.selectorMask = 0;
+    output.selectorEntries.fill(0);
     output.overflowCount = 0;
-    if (!assign_kinds(walk, output)) {
+    if (!assign_selected_entries(walk, output)) {
         return false;
     }
-    // Kinds must be complete before any hash is filed, because a hash is routed by matching its
-    // category against a bucket's kind.
     std::array<std::uint32_t, 256> sources{};
     chosen_sources(walk, sources);
+    if (!assign_active_super_selector(walk, sources, output)) {
+        return false;
+    }
+    assign_active_destinations(walk, sources, output);
+
+    // Kinds must be complete before any hash is filed, because hashes route by category.
     for (std::size_t entryIndex = 0; entryIndex < walk.entryCount; ++entryIndex) {
         if (!active(walk.entries[entryIndex], sources)) {
             continue;

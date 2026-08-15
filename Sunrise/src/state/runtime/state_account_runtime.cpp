@@ -842,8 +842,7 @@ finalize_equipment_transition(const AccountState& account,
 
     constexpr std::uint32_t kMaximumInventorySerial =
         static_cast<std::uint32_t>((std::numeric_limits<std::int32_t>::max)());
-    if (movedItemCount == 0
-        || (displacedInstanceSoid != 0 && movedItemCount < 2)
+    if (movedItemCount == 0 || (displacedInstanceSoid != 0 && movedItemCount < 2)
         || after.nextInventorySerial > kMaximumInventorySerial) {
         return false;
     }
@@ -914,8 +913,7 @@ finalize_equipment_transition(const AccountState& account,
     if (displacedInstanceSoid != 0) {
         ResolvedPosition checkedDisplaced{};
         if (!find_resolved_position(checkedAfter, displacedInstanceSoid, checkedDisplaced)
-            || checkedDisplaced.equipped
-            || checkedDisplaced.equipmentSlot != expectedNativeSlot
+            || checkedDisplaced.equipped || checkedDisplaced.equipmentSlot != expectedNativeSlot
             || checkedDisplaced.mutationSerial != beforeRequested.mutationSerial) {
             return false;
         }
@@ -930,7 +928,7 @@ finalize_equipment_transition(const AccountState& account,
            && left.level == right.level && left.quantity == right.quantity
            && left.flags == right.flags && left.sockets.policy == right.sockets.policy
            && left.sockets.plugCount == right.sockets.plugCount
-           && left.sockets.plugs == right.sockets.plugs;
+           && left.sockets.plugs == right.sockets.plugs && left.subclass == right.subclass;
 }
 
 /** Records one checked native item-state transition. */
@@ -1183,24 +1181,56 @@ ability_selection_of(const CharacterState& character) noexcept {
             character.classAbilityEntry};
 }
 
-/** Writes one canonical subclass entry into its semantic character field. */
-void set_subclass_field(CharacterState& character,
-                        SubclassAbilityField field,
-                        std::uint8_t entry) noexcept {
+/** @return Per-item form of the character's currently equipped subclass state. */
+[[nodiscard]] authored_inventory::SubclassState
+subclass_state_of(const CharacterState& character) noexcept {
+    return {character.movementAbilityEntry,
+            character.grenadeAbilityEntry,
+            character.superAbilityEntry,
+            character.meleeAbilityEntry,
+            character.classAbilityEntry,
+            character.acquiredSubclassAbilityMask};
+}
+
+/** Loads one subclass item's saved choices into the character appearance view. */
+void apply_subclass_state(const authored_inventory::SubclassState& subclass,
+                          CharacterState& character) noexcept {
+    character.movementAbilityEntry = subclass.movementAbilityEntry;
+    character.grenadeAbilityEntry = subclass.grenadeAbilityEntry;
+    character.superAbilityEntry = subclass.superAbilityEntry;
+    character.meleeAbilityEntry = subclass.meleeAbilityEntry;
+    character.classAbilityEntry = subclass.classAbilityEntry;
+    character.acquiredSubclassAbilityMask = subclass.acquiredAbilityMask;
+}
+
+/** Writes one canonical subclass entry and keeps the character-summary super selector primary. */
+[[nodiscard]] bool
+set_subclass_field(CharacterState& character,
+                   SubclassAbilityField field,
+                   std::uint8_t entry,
+                   const build_data::socket_entry_lists::Definition& definition,
+                   const build_data::socket_entry_lists::EntryTable& table) noexcept {
     switch (field) {
     case SubclassAbilityField::movement:
         character.movementAbilityEntry = entry;
-        break;
+        return true;
     case SubclassAbilityField::grenade:
         character.grenadeAbilityEntry = entry;
-        break;
-    case SubclassAbilityField::melee:
+        return true;
+    case SubclassAbilityField::melee: {
+        std::uint8_t superEntry = 0;
+        if (!build_data::socket_entry_lists::primary_super_entry(definition, table, superEntry)) {
+            return false;
+        }
         character.meleeAbilityEntry = entry;
-        break;
+        character.superAbilityEntry = superEntry;
+        return true;
+    }
     case SubclassAbilityField::classAbility:
         character.classAbilityEntry = entry;
-        break;
+        return true;
     }
+    return false;
 }
 
 /** Returns every ready entry that belongs to one selectable authored plug source. */
@@ -1239,9 +1269,8 @@ acquired_source_mask(const build_data::socket_entry_lists::Definition& definitio
            && left.subclassDefinitionIndex == right.subclassDefinitionIndex
            && left.socketEntryListIndex == right.socketEntryListIndex
            && left.requestedEntry == right.requestedEntry
-           && left.selectedEntry == right.selectedEntry
-           && left.selectedGroup == right.selectedGroup && left.field == right.field
-           && left.prepared == right.prepared
+           && left.selectedEntry == right.selectedEntry && left.selectedGroup == right.selectedGroup
+           && left.field == right.field && left.prepared == right.prepared
            && same_character(left.beforeCharacter, right.beforeCharacter)
            && same_character(left.afterCharacter, right.afterCharacter);
 }
@@ -1262,9 +1291,8 @@ acquired_source_mask(const build_data::socket_entry_lists::Definition& definitio
     std::uint8_t selectedEntry = 0;
     std::uint8_t selectedGroup = lists::kNoEntryGroup;
     const auto fail = [&](std::string_view reason) noexcept {
-        const std::uint64_t characterSoid = characterIndex < snapshot.characterCount
-                                                ? snapshot.characters[characterIndex].soid
-                                                : 0;
+        const std::uint64_t characterSoid =
+            characterIndex < snapshot.characterCount ? snapshot.characters[characterIndex].soid : 0;
         report_subclass_selection("stage_internal",
                                   "fail",
                                   reason,
@@ -1309,8 +1337,7 @@ acquired_source_mask(const build_data::socket_entry_lists::Definition& definitio
 
     const lists::Entry& requested = entryTable.entries[requestedEntry];
     selectedGroup = requested.group;
-    if (requested.plugSource == lists::kNoPlugSource
-        || requested.group == lists::kNoEntryGroup) {
+    if (requested.plugSource == lists::kNoPlugSource || requested.group == lists::kNoEntryGroup) {
         return fail("unselectable_entry");
     }
 
@@ -1334,8 +1361,7 @@ acquired_source_mask(const build_data::socket_entry_lists::Definition& definitio
             return fail("configured_entry");
         }
         const lists::Entry& current = entryTable.entries[configured[index]];
-        if (current.plugSource == lists::kNoPlugSource
-            || current.group == lists::kNoEntryGroup) {
+        if (current.plugSource == lists::kNoPlugSource || current.group == lists::kNoEntryGroup) {
             return fail("configured_group");
         }
         if (current.group == requested.group) {
@@ -1356,11 +1382,15 @@ acquired_source_mask(const build_data::socket_entry_lists::Definition& definitio
     for (std::size_t entry = 0; entry < socketList.entryCount; ++entry) {
         const lists::Entry& candidate = entryTable.entries[entry];
         if ((socketList.readyMask & (std::uint64_t{1} << entry)) != 0
-            && candidate.group == requested.group
-            && candidate.plugSource == requested.plugSource) {
+            && candidate.group == requested.group && candidate.plugSource == requested.plugSource) {
             CharacterState candidateCharacter = before;
-            set_subclass_field(
-                candidateCharacter, field, static_cast<std::uint8_t>(entry));
+            if (!set_subclass_field(candidateCharacter,
+                                    field,
+                                    static_cast<std::uint8_t>(entry),
+                                    socketList,
+                                    entryTable)) {
+                return fail("primary_super");
+            }
             build_data::abilities::Definition abilityBuckets{};
             if (build_data::find_ability_buckets(detail.socketEntryListIndex,
                                                  ability_selection_of(candidateCharacter),
@@ -1395,7 +1425,9 @@ acquired_source_mask(const build_data::socket_entry_lists::Definition& definitio
     }
 
     CharacterState after = before;
-    set_subclass_field(after, field, selectedEntry);
+    if (!set_subclass_field(after, field, selectedEntry, socketList, entryTable)) {
+        return fail("primary_super");
+    }
     const std::uint64_t previousAcquired =
         acquired_source_mask(socketList, entryTable, previousEntry);
     const std::uint64_t selectedAcquired =
@@ -1404,6 +1436,11 @@ acquired_source_mask(const build_data::socket_entry_lists::Definition& definitio
         return fail("acquired_mask");
     }
     after.acquiredSubclassAbilityMask |= previousAcquired | selectedAcquired;
+    auto& afterSubclassItem = after.equipment.slots[kSubclassSlot];
+    if (!afterSubclassItem.has_value() || afterSubclassItem->instanceSoid != subclassInstanceSoid) {
+        return fail("after_subclass_item");
+    }
+    afterSubclassItem->subclass = subclass_state_of(after);
     AccountState candidate = snapshot;
     candidate.characters[characterIndex] = after;
     build_data::abilities::Definition abilityBuckets{};
@@ -2136,6 +2173,14 @@ bool prepare_equipment_swap(std::uint64_t requestedInstanceSoid,
         }
         --after.inventory.count;
         after.inventory.values[after.inventory.count] = {};
+    }
+
+    if (equipmentSlotIndex
+        == static_cast<std::size_t>(authored_inventory::EquipmentSlot::subclass)) {
+        if (!equipped.has_value()) {
+            return false;
+        }
+        apply_subclass_state(equipped->subclass, after);
     }
 
     std::size_t movedItemCount = 0;
