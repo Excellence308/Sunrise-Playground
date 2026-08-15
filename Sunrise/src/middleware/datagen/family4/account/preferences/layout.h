@@ -104,7 +104,8 @@ struct BindingsRecord {
     std::uint8_t voiceChatMirror{};
     std::uint8_t verticalSyncMirror{};
     std::array<std::byte, kFieldOfViewPaddingSize> fieldOfViewPadding{};
-    std::int32_t fieldOfViewAdjustment{};
+    /** Absolute PC field-of-view value from the menu's 55 through 105 range. */
+    std::int32_t fieldOfView{};
     /** 0 picks this replicated array after the client's initial seed pass. */
     std::uint8_t sourceSelector{};
     std::array<std::byte, kBindingArrayPaddingSize> bindingArrayPadding{};

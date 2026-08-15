@@ -9,6 +9,7 @@ bool Parser::controls_settings(state::account::settings::Controls& output) noexc
     enum class Field : std::size_t {
         buttonLayout,
         movementMode,
+        keyBindingStorage,
         controllerLookSensitivity,
         controllerInvertVertical,
         controllerAutoLookCentering,
@@ -52,6 +53,10 @@ bool Parser::controls_settings(state::account::settings::Controls& output) noexc
             }
         } else if (key == "movement_mode") {
             if (!mark(Field::movementMode) || !signed_byte(output.movementMode)) {
+                return false;
+            }
+        } else if (key == "key_binding_storage") {
+            if (!mark(Field::keyBindingStorage) || !signed_byte(output.keyBindingStorage)) {
                 return false;
             }
         } else if (key == "controller_look_sensitivity") {

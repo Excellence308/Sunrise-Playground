@@ -7,16 +7,11 @@ namespace {
 
 /** Native keybinding halves use input code 0x74 as the unbound sentinel. */
 constexpr std::uint16_t kUnboundInputCode = 0x0074;
-/** Seed version 0 lets the client set up local mirrors once after sign-in. */
-constexpr std::int32_t kOpenSeedVersion = 0;
 /**
  * Seed version 1 closes a gate so the client keeps the replicated values behind it.
- * The keybinding gate stays open so the client seeds its own defaults. The post-processing gate
- * stays closed, or local cvars would overwrite its 3 replicated fields on every sign-in.
+ * Sunrise authors both preference records, so both native gates stay closed.
  */
 constexpr std::int32_t kClosedSeedVersion = 1;
-/** Source 0 makes later input reads use the replicated keybinding array. */
-constexpr std::uint8_t kReplicatedBindingSource = 0;
 
 /**
  * Converts a semantic boolean to the native 1-byte form.
@@ -53,8 +48,7 @@ bool encode(const state::account::settings::AccountSettings& settings,
     record = {};
     bindingsRecord = {};
     record.postProcessingSeedVersion = kClosedSeedVersion;
-    bindingsRecord.accountSeedVersion = kOpenSeedVersion;
-    bindingsRecord.sourceSelector = kReplicatedBindingSource;
+    bindingsRecord.accountSeedVersion = kClosedSeedVersion;
 
     const auto& controls = settings.controls;
     record.buttonLayout = controls.buttonLayout;
@@ -72,6 +66,7 @@ bool encode(const state::account::settings::AccountSettings& settings,
     record.unidentifiedToggle = native_boolean(controls.unidentifiedToggle);
     record.mouseAimSmoothing = native_boolean(controls.mouseAimSmoothing);
     record.controllerSwapShoulders = native_boolean(controls.controllerSwapShoulders);
+    bindingsRecord.sourceSelector = static_cast<std::uint8_t>(controls.keyBindingStorage);
 
     const auto& audio = settings.audio;
     record.voiceOutputMode = audio.voiceOutputMode;
@@ -87,6 +82,8 @@ bool encode(const state::account::settings::AccountSettings& settings,
     const auto& display = settings.display;
     record.brightness = display.brightness;
     record.showFps = native_boolean(display.showFps);
+    bindingsRecord.verticalSyncMirror = native_boolean(display.verticalSync);
+    bindingsRecord.fieldOfView = display.fieldOfView;
     record.hdrMode = display.hdrMode;
     record.calibrationPrimary = display.calibrationPrimary;
     record.calibrationAlpha = display.calibrationAlpha;
