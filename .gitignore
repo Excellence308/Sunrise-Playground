@@ -13,3 +13,7 @@
 
 # CMake build files
 /build/
+/cmake-build/
+
+# Local reverse-engineering deployment captures
+/backups/

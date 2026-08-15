@@ -2,6 +2,27 @@
 
 Destiny 2 Offline Exploration Mod
 
+> [!IMPORTANT]
+> **This repository is an independent reverse-engineering playground.** It is not an official
+> Sunrise release and should not be confused with the excellent work in
+> [stanuwu/Sunrise](https://github.com/stanuwu/Sunrise) or the Linux foundation in
+> [TotalTaxAmount/Sunrise](https://github.com/TotalTaxAmount/Sunrise). Playground builds are
+> experimental, may be incomplete, and are published as GitHub prereleases.
+
+## Playground releases
+
+Playground tags keep the compatible upstream version visible:
+`<upstream-version>-playground.<iteration>`. For example, `0.2.1-playground.1` is the first
+experimental release based on Sunrise 0.2.1; it is not Sunrise 0.2.2.
+
+The first playground release focuses on the tested inventory and subclass work: inventory
+equipment swaps, all three installed subclass items for each character class, ability acquisition
+and selection, and installed-data-driven alternate-super routing. Individual supers are not called
+verified until they have been tested in the HUD and in an activity.
+
+See [the release notes](docs/releases/0.2.1-playground.1.md) for the exact tested boundary and known
+limitations.
+
 > This mod installs onto an old build of the game and allows you to play it offline, loading into
 > destinations and exploring them.
 >
