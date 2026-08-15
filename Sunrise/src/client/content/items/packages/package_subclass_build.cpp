@@ -11,38 +11,6 @@ namespace {
 namespace domain = state::build_data::abilities;
 namespace lists = state::build_data::socket_entry_lists;
 
-/** The authored equipment slot that holds the subclass. */
-constexpr std::size_t kSubclassSlot =
-    static_cast<std::size_t>(state::account::inventory::EquipmentSlot::subclass);
-
-/**
- * Finds the socket entry list that carries one character's subclass abilities.
- * @param character Authored character.
- * @param socketEntryListIndex Receives the subclass's socket-entry-list index.
- * @return True when the character equips a subclass whose detail is published.
- */
-[[nodiscard]] bool subclass_list(const state::CharacterState& character,
-                                 std::uint16_t& socketEntryListIndex,
-                                 const char*& reason) noexcept {
-    const auto& slot = character.equipment.slots[kSubclassSlot];
-    state::build_data::items::Definition item{};
-    state::build_data::items::details::Definition detail{};
-    reason = "subclass_slot";
-    if (!slot.has_value()) {
-        return false;
-    }
-    reason = "subclass_item";
-    if (!state::build_data::find_item_definition_hash(slot->definitionHash, item)) {
-        return false;
-    }
-    reason = "subclass_detail";
-    if (!state::build_data::find_configured_item_detail(item.definitionIndex, detail)) {
-        return false;
-    }
-    socketEntryListIndex = detail.socketEntryListIndex;
-    return true;
-}
-
 /**
  * @param rows Rows built so far.
  * @param row Candidate whose key is tested against them.
@@ -53,17 +21,6 @@ constexpr std::size_t kSubclassSlot =
     for (const domain::Definition& existing : rows) {
         if (existing.socketEntryListIndex == row.socketEntryListIndex
             && existing.selection == row.selection) {
-            return true;
-        }
-    }
-    return false;
-}
-
-/** @param rows Rows built so far. @return True when this subclass list was already expanded. */
-[[nodiscard]] bool held_list(std::span<const domain::Definition> rows,
-                             std::uint16_t socketEntryListIndex) noexcept {
-    for (const domain::Definition& existing : rows) {
-        if (existing.socketEntryListIndex == socketEntryListIndex) {
             return true;
         }
     }
@@ -244,6 +201,9 @@ struct EntryChoices {
         configured.classEntry,
     };
     for (std::size_t field = 0; field < selected.size(); ++field) {
+        if (field == 2) {
+            continue;
+        }
         if (!choices_of(definition, table, selected[field], choices[field])) {
             return false;
         }
@@ -263,41 +223,43 @@ struct EntryChoices {
         }
     }
 
+    std::uint8_t superEntry = 0;
+    if (!lists::primary_super_entry(definition, table, superEntry)) {
+        return false;
+    }
     for (std::size_t movement = 0; movement < choices[0].count; ++movement) {
         for (std::size_t grenade = 0; grenade < choices[1].count; ++grenade) {
-            for (std::size_t super = 0; super < choices[2].count; ++super) {
-                for (std::size_t melee = 0; melee < choices[3].count; ++melee) {
-                    for (std::size_t classAbility = 0; classAbility < choices[4].count;
-                         ++classAbility) {
-                        domain::Definition row{};
-                        row.socketEntryListIndex = socketEntryListIndex;
-                        row.selection = {
-                            choices[0].entries[movement],
-                            choices[1].entries[grenade],
-                            choices[2].entries[super],
-                            choices[3].entries[melee],
-                            choices[4].entries[classAbility],
-                        };
-                        if (count >= output.size()) {
-                            return false;
-                        }
-                        // A shared plug source can span several authored nodes. Its first node is
-                        // not necessarily the one the character summary uses, so resolve the
-                        // representative from the installed selector chains instead of assuming.
-                        if (!build_supported_row(source,
-                                                 scratch,
-                                                 definitionBytes,
-                                                 blob,
-                                                 definition,
-                                                 table,
-                                                 socketEntryListIndex,
-                                                 row.selection,
-                                                 row)
-                            || held(output.first(count), row)) {
-                            continue;
-                        }
-                        output[count++] = row;
+            for (std::size_t melee = 0; melee < choices[3].count; ++melee) {
+                for (std::size_t classAbility = 0; classAbility < choices[4].count;
+                     ++classAbility) {
+                    domain::Definition row{};
+                    row.socketEntryListIndex = socketEntryListIndex;
+                    row.selection = {
+                        choices[0].entries[movement],
+                        choices[1].entries[grenade],
+                        superEntry,
+                        choices[3].entries[melee],
+                        choices[4].entries[classAbility],
+                    };
+                    if (count >= output.size()) {
+                        return false;
                     }
+                    // A shared plug source can span several authored nodes. Its first node is not
+                    // necessarily the one the character summary uses, so resolve the
+                    // representative from the installed selector chains instead of assuming.
+                    if (!build_supported_row(source,
+                                             scratch,
+                                             definitionBytes,
+                                             blob,
+                                             definition,
+                                             table,
+                                             socketEntryListIndex,
+                                             row.selection,
+                                             row)
+                        || held(output.first(count), row)) {
+                        continue;
+                    }
+                    output[count++] = row;
                 }
             }
         }
@@ -305,18 +267,18 @@ struct EntryChoices {
     return true;
 }
 
-/** @param character Authored character. @return Its 5 selected socket entries. */
-[[nodiscard]] domain::Selection selection_of(const state::CharacterState& character) noexcept {
-    return {character.movementAbilityEntry,
-            character.grenadeAbilityEntry,
-            character.superAbilityEntry,
-            character.meleeAbilityEntry,
-            character.classAbilityEntry};
+/** @return The native first choice in each selectable group, shared by all shipped subclasses. */
+[[nodiscard]] constexpr domain::Selection default_selection() noexcept {
+    return {state::kDefaultMovementAbilityEntry,
+            state::kDefaultGrenadeAbilityEntry,
+            state::kDefaultSuperAbilityEntry,
+            state::kDefaultMeleeAbilityEntry,
+            state::kDefaultClassAbilityEntry};
 }
 
 } // namespace
 
-/** Builds every ability combination for each distinct configured subclass. */
+/** Builds every ability combination for every installed list identified as a subclass. */
 bool build_character_abilities(const reader::Source& source,
                                reader::Scratch& scratch,
                                std::span<const std::byte> root,
@@ -341,20 +303,11 @@ bool build_character_abilities(const reader::Source& source,
         report_ability_failure("table_array", 0, table.size(), 0);
         return false;
     }
-    const state::AccountState account = state::account_snapshot();
-    for (std::size_t character = 0; character < account.characterCount && count < output.size();
-         ++character) {
-        domain::Definition row{};
-        const char* subclassReason = "subclass";
-        if (!subclass_list(
-                account.characters[character], row.socketEntryListIndex, subclassReason)) {
-            const auto& subclass = account.characters[character].equipment.slots[kSubclassSlot];
-            report_ability_failure(
-                subclassReason, character, subclass.has_value() ? subclass->definitionHash : 0, 0);
-            continue;
-        }
-        const std::uint16_t socketEntryListIndex = row.socketEntryListIndex;
-        if (held_list(output.first(count), socketEntryListIndex)) {
+    const std::size_t listCount = state::build_data::socket_entry_list_count();
+    for (std::size_t list = 0; list < listCount && count < output.size(); ++list) {
+        const auto socketEntryListIndex = static_cast<std::uint16_t>(list);
+        lists::EntryTable entryTable{};
+        if (!state::build_data::find_socket_entry_table(socketEntryListIndex, entryTable)) {
             continue;
         }
         tables::IndexRow indexRow{};
@@ -363,15 +316,14 @@ bool build_character_abilities(const reader::Source& source,
                                socketEntryListIndex,
                                indexRow)
             || indexRow.targetTag == 0) {
-            report_ability_failure("index_row", character, socketEntryListIndex, rows.count);
+            report_ability_failure("index_row", list, socketEntryListIndex, rows.count);
             continue;
         }
         if (!reader::read_tag(source, scratch, indexRow.targetTag, definition)) {
-            report_ability_failure(
-                "definition_read", character, socketEntryListIndex, indexRow.targetTag);
+            report_ability_failure("definition_read", list, socketEntryListIndex, indexRow.targetTag);
             continue;
         }
-        const domain::Selection selection = selection_of(account.characters[character]);
+        const domain::Selection selection = default_selection();
         if (!build_subclass_abilities(source,
                                       scratch,
                                       std::span<const std::byte>{definition},
@@ -383,13 +335,12 @@ bool build_character_abilities(const reader::Source& source,
             const std::size_t packedSelection =
                 selection.movementEntry | (selection.grenadeEntry << 8U)
                 | (selection.superEntry << 16U) | (selection.meleeEntry << 24U);
-            report_ability_failure(
-                "bucket_build", character, socketEntryListIndex, packedSelection);
+            report_ability_failure("bucket_build", list, socketEntryListIndex, packedSelection);
             continue;
         }
     }
     if (count == 0) {
-        report_ability_failure("empty", account.characterCount, rows.count, output.size());
+        report_ability_failure("empty", listCount, rows.count, output.size());
     }
     return true;
 }

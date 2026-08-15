@@ -36,6 +36,27 @@ inline constexpr std::size_t kPlugCapacity = 12;
 /** The engine no-definition hash cannot identify an authored item or plug. */
 inline constexpr std::uint32_t kNoDefinitionHash = 0x811C9DC5U;
 
+/** Default selectable entries shared by every subclass in the supported installed build. */
+inline constexpr std::uint8_t kDefaultMovementAbilityEntry = 4;
+inline constexpr std::uint8_t kDefaultGrenadeAbilityEntry = 7;
+inline constexpr std::uint8_t kDefaultSuperAbilityEntry = 10;
+inline constexpr std::uint8_t kDefaultMeleeAbilityEntry = 11;
+inline constexpr std::uint8_t kDefaultClassAbilityEntry = 2;
+/** Socket-entry state has 64 fixed lanes, so larger selectors are never valid. */
+inline constexpr std::uint8_t kMaximumSubclassAbilityEntry = 63;
+
+/** Per-instance subclass choices and the nodes this item has acquired during the session. */
+struct SubclassState {
+    std::uint8_t movementAbilityEntry{kDefaultMovementAbilityEntry};
+    std::uint8_t grenadeAbilityEntry{kDefaultGrenadeAbilityEntry};
+    std::uint8_t superAbilityEntry{kDefaultSuperAbilityEntry};
+    std::uint8_t meleeAbilityEntry{kDefaultMeleeAbilityEntry};
+    std::uint8_t classAbilityEntry{kDefaultClassAbilityEntry};
+    std::uint64_t acquiredAbilityMask{};
+
+    friend bool operator==(const SubclassState&, const SubclassState&) = default;
+};
+
 /** Says whether Middleware uses native socket defaults or authored lanes. */
 enum class SocketPolicy : std::uint8_t {
     nativeDefaults,
@@ -88,6 +109,8 @@ struct Item {
     /** Native accumulated item-state bits such as the finisher favorite marker. */
     std::uint32_t flags{};
     Sockets sockets;
+    /** Used only when the installed item points at a subclass socket-entry table. */
+    SubclassState subclass;
 };
 
 /** Ordered unequipped items placed into their native character-inventory bucket ranges. */
@@ -113,6 +136,9 @@ struct Equipment {
  * @return True when the policy, count and fixed tail agree.
  */
 [[nodiscard]] bool valid(const Sockets& sockets) noexcept;
+
+/** Checks the five bounded selectors of one per-subclass state. */
+[[nodiscard]] bool valid(const SubclassState& subclass) noexcept;
 
 /**
  * Checks one whole authored item without reading installed build data.

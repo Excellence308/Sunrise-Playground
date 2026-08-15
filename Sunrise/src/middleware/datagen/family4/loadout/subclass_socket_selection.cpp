@@ -1,7 +1,7 @@
 /**
  * Subclass socket selection. An item's socket entries start absent or ready; the entries the
- * character has selected make their whole group active, and the super lane is active although it
- * carries no plug source.
+ * character has selected make their whole group active. The matching extracted ability row
+ * supplies every authored selector lane, including lanes exposed only by later subclass trees.
  */
 
 #include "subclass_socket_selection.h"
@@ -12,6 +12,7 @@ namespace sunrise::middleware::datagen::family4::loadout {
 namespace {
 
 namespace build_socket_lists = state::build_data::socket_entry_lists;
+namespace build_abilities = state::build_data::abilities;
 
 /** Bucket the grenade publishes into. Entry order is sprint, class, movement, grenade, super,
  * melee, so the entries themselves are the character's own choices. */
@@ -42,23 +43,24 @@ constexpr std::uint8_t kSprintEntry = 1;
 
 } // namespace
 
-/** Builds the selection for one character. */
-void subclass_selection(const state::CharacterState& character,
+/** Builds the selection for one subclass item. */
+void subclass_selection(const state::account::inventory::SubclassState& subclass,
+                        state::CharacterClass characterClass,
                         SubclassSelection& output) noexcept {
     output = {};
-    output.selected[0] = {character.grenadeAbilityEntry, kGrenadeBucket};
-    output.selected[1] = {character.superAbilityEntry, kSuperBucket};
-    output.selected[2] = {character.meleeAbilityEntry, kMeleeBucket};
-    output.selected[3] = {character.movementAbilityEntry, kMovementBucket};
+    output.selected[0] = {subclass.grenadeAbilityEntry, kGrenadeBucket};
+    output.selected[1] = {subclass.superAbilityEntry, kSuperBucket};
+    output.selected[2] = {subclass.meleeAbilityEntry, kMeleeBucket};
+    output.selected[3] = {subclass.movementAbilityEntry, kMovementBucket};
     output.selected[4] = {kSprintEntry, kSprintBucket};
-    output.selected[5] = {character.classAbilityEntry,
-                          class_ability_bucket(character.characterClass)};
+    output.selected[5] = {subclass.classAbilityEntry, class_ability_bucket(characterClass)};
 }
 
 /** Resolves one item's socket-entry states and selector lanes. */
 void resolve_socket_states(
     const build_socket_lists::Definition& definition,
-    const state::CharacterState& character,
+    const state::account::inventory::SubclassState& subclass,
+    state::CharacterClass characterClass,
     std::array<instance::SocketEntryState, instance::layout::kSocketEntryStateCapacity>& output,
     std::array<instance::SocketSelector, kSelectorBucketCount>& selectors) noexcept {
     output.fill(instance::SocketEntryState::absent);
@@ -66,7 +68,7 @@ void resolve_socket_states(
     for (std::size_t index = 0; index < definition.entryCount; ++index) {
         const std::uint64_t bit = std::uint64_t{1} << index;
         if ((definition.readyMask & bit) != 0) {
-            output[index] = (character.acquiredSubclassAbilityMask & bit) != 0
+            output[index] = (subclass.acquiredAbilityMask & bit) != 0
                                 ? instance::SocketEntryState::acquired
                                 : instance::SocketEntryState::ready;
         }
@@ -76,8 +78,36 @@ void resolve_socket_states(
     if (!state::build_data::find_socket_entry_table(definition.definitionIndex, entries)) {
         return;
     }
+    std::uint8_t primarySuper = 0;
+    if (!build_socket_lists::primary_super_entry(definition, entries, primarySuper)
+        || subclass.superAbilityEntry != primarySuper) {
+        return;
+    }
+    const build_abilities::Selection abilitySelection{
+        subclass.movementAbilityEntry,
+        subclass.grenadeAbilityEntry,
+        subclass.superAbilityEntry,
+        subclass.meleeAbilityEntry,
+        subclass.classAbilityEntry,
+    };
+    build_abilities::Definition ability{};
+    if (!state::build_data::find_ability_buckets(
+            definition.definitionIndex, abilitySelection, ability)) {
+        return;
+    }
+    for (std::size_t bucket = 0; bucket < ability.selectorEntries.size(); ++bucket) {
+        if ((ability.selectorMask & (std::uint16_t{1} << bucket)) != 0
+            && ability.selectorEntries[bucket] >= definition.entryCount) {
+            return;
+        }
+    }
+    for (std::size_t bucket = 0; bucket < ability.selectorEntries.size(); ++bucket) {
+        if ((ability.selectorMask & (std::uint16_t{1} << bucket)) != 0) {
+            selectors[bucket] = instance::SocketSelector{ability.selectorEntries[bucket], 0, 0};
+        }
+    }
     SubclassSelection selection{};
-    subclass_selection(character, selection);
+    subclass_selection(subclass, characterClass, selection);
 
     // Each selected entry claims its group. Every entry sharing that group and plug source is
     // active too, which is why a run of duplicate lanes flips together.
@@ -87,7 +117,6 @@ void resolve_socket_states(
         if (selected.entry >= definition.entryCount || selected.bucket >= selectors.size()) {
             continue;
         }
-        selectors[selected.bucket] = instance::SocketSelector{selected.entry, 0, 0};
         const build_socket_lists::Entry& entry = entries.entries[selected.entry];
         if (entry.plugSource == build_socket_lists::kNoPlugSource || entry.group >= claimed.size()
             || claimed[entry.group]) {
@@ -101,9 +130,9 @@ void resolve_socket_states(
         const bool matchesGroup = entry.plugSource != build_socket_lists::kNoPlugSource
                                   && entry.group < claimed.size() && claimed[entry.group]
                                   && chosen[entry.group] == entry.plugSource;
-        const bool superLane = entry.plugSource == build_socket_lists::kNoPlugSource
-                               && entry.kind == build_socket_lists::kSuperEntryKind;
-        if (matchesGroup || superLane) {
+        const bool selectedSuper =
+            entry.plugSource == build_socket_lists::kNoPlugSource && index == primarySuper;
+        if (matchesGroup || selectedSuper) {
             output[index] = instance::SocketEntryState::active;
         }
     }

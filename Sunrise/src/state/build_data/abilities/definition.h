@@ -13,12 +13,15 @@ inline constexpr std::size_t kBucketHashCapacity = 16;
 /** The flat overflow bank holds 32 hashes no bucket category claims. */
 inline constexpr std::size_t kOverflowCapacity = 32;
 /**
- * Every selectable combination of the configured characters' subclasses. Three choices each for
- * movement, grenade and path plus two class abilities produce 54 rows per character.
+ * Every selectable combination of all 9 installed subclasses. Three choices each for movement,
+ * grenade and path plus two class abilities produce 54 rows per subclass, or 486 rows total.
+ * The next power of two keeps this fixed storage bounded without imposing a protocol limit.
  */
-inline constexpr std::size_t kDefinitionCapacity = 256;
+inline constexpr std::size_t kDefinitionCapacity = 512;
 /** All bits set marks a bucket no entry claimed. */
 inline constexpr std::uint8_t kEmptyBucketKind = 0xFF;
+/** Native selector entries are one byte, and shipped lists use fewer than 64. */
+inline constexpr std::size_t kSelectorEntryCapacity = 64;
 
 /** One ability bucket: the item category it collects and that category's definition hashes. */
 struct Bucket {
@@ -49,6 +52,10 @@ struct Selection {
 struct Definition {
     std::uint16_t socketEntryListIndex{};
     Selection selection{};
+    /** One bit for every ability bucket whose item selector is authored by this row. */
+    std::uint16_t selectorMask{};
+    /** Socket-entry index published into each selected ability bucket. */
+    std::array<std::uint8_t, kBucketCapacity> selectorEntries{};
     std::uint8_t overflowCount{};
     std::array<Bucket, kBucketCapacity> buckets{};
     std::array<std::uint32_t, kOverflowCapacity> overflow{};

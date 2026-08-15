@@ -49,22 +49,28 @@ enum class CharacterClass : std::uint8_t {
 };
 
 /** Default movement entry. Each subclass offers 3, as entries 4, 5 and 6 of its group. */
-inline constexpr std::uint8_t kDefaultMovementAbilityEntry = 4;
+inline constexpr std::uint8_t kDefaultMovementAbilityEntry =
+    account::inventory::kDefaultMovementAbilityEntry;
 /** No socket entry list declares more entries than this, so a larger value is not an entry. */
-inline constexpr std::uint8_t kMaximumMovementAbilityEntry = 63;
+inline constexpr std::uint8_t kMaximumMovementAbilityEntry =
+    account::inventory::kMaximumSubclassAbilityEntry;
 
 /**
  * Socket entries of the other abilities a subclass lets the player choose. Each names one entry
  * of that ability's group. The subclass offers several and the character picks one. These
  * defaults are the first option of each group, where every shipped subclass starts.
  */
-inline constexpr std::uint8_t kDefaultGrenadeAbilityEntry = 7;
+inline constexpr std::uint8_t kDefaultGrenadeAbilityEntry =
+    account::inventory::kDefaultGrenadeAbilityEntry;
 /** Default super entry. It is the lane that carries no plug source and kind 34. */
-inline constexpr std::uint8_t kDefaultSuperAbilityEntry = 10;
+inline constexpr std::uint8_t kDefaultSuperAbilityEntry =
+    account::inventory::kDefaultSuperAbilityEntry;
 /** Default melee entry. */
-inline constexpr std::uint8_t kDefaultMeleeAbilityEntry = 11;
+inline constexpr std::uint8_t kDefaultMeleeAbilityEntry =
+    account::inventory::kDefaultMeleeAbilityEntry;
 /** Default class-ability entry. Which bucket it publishes into follows the character class. */
-inline constexpr std::uint8_t kDefaultClassAbilityEntry = 2;
+inline constexpr std::uint8_t kDefaultClassAbilityEntry =
+    account::inventory::kDefaultClassAbilityEntry;
 
 /** Authored state for one playable character slot. */
 struct CharacterState {
