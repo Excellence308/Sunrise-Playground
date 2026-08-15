@@ -14,7 +14,8 @@ inline constexpr std::size_t kEntryCapacity = 36;
 inline constexpr std::uint8_t kAbsentEntryState = 0;
 /** Native state 16 marks an initial socket entry whose plug source is available. */
 inline constexpr std::uint8_t kReadyEntryState = 16;
-
+/** Native state 17 marks an acquired socket entry that is not currently selected. */
+inline constexpr std::uint8_t kAcquiredEntryState = 17;
 /** Native state 18 marks a socket entry the character has selected. */
 inline constexpr std::uint8_t kActiveEntryState = 18;
 /** Entry kind of the super lane, which is active although it carries no plug source. */

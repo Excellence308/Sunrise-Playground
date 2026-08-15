@@ -151,6 +151,37 @@ struct PendingSocketPlug {
     bool prepared{};
 };
 
+/** Semantic character field selected by one subclass socket-entry group. */
+enum class SubclassAbilityField : std::uint8_t {
+    movement,
+    grenade,
+    melee,
+    classAbility,
+};
+
+/** Prepared subclass socket-entry selection for the equipped selected-character subclass. */
+struct PendingSubclassSelection {
+    /** Exact prepare-time character view used as the commit staleness guard. */
+    CharacterState beforeCharacter{};
+    /** Canonical after-image. Only one semantic ability entry differs. */
+    CharacterState afterCharacter{};
+    std::uint64_t accountSoid{};
+    std::uint64_t characterSoid{};
+    std::uint64_t subclassInstanceSoid{};
+    std::uint32_t subclassDefinitionHash{};
+    std::uint32_t selectedPlugSource{};
+    std::size_t characterIndex{};
+    std::uint16_t subclassDefinitionIndex{};
+    std::uint16_t socketEntryListIndex{};
+    /** Exact entry named by opcode 801. */
+    std::uint8_t requestedEntry{};
+    /** First entry carrying the requested group/source, used as the stable authored selection. */
+    std::uint8_t selectedEntry{};
+    std::uint8_t selectedGroup{};
+    SubclassAbilityField field{SubclassAbilityField::movement};
+    bool prepared{};
+};
+
 /** Prepared accumulated item-state change for one selected-character item instance. */
 struct PendingItemState {
     CharacterState beforeCharacter{};
@@ -390,6 +421,22 @@ commit_profile_item_acquisition(PendingProfileItemAcquisition& mutation) noexcep
  * @return True when the exact canonical transition commits atomically.
  */
 [[nodiscard]] bool commit_socket_plug(PendingSocketPlug& mutation) noexcept;
+
+/**
+ * Prepares one opcode-801 selection against the selected character's exact equipped subclass.
+ * The installed socket-entry table maps the request to a semantic ability field and canonical
+ * linked-path representative; no class-specific node indices are authored in State.
+ */
+[[nodiscard]] bool prepare_subclass_selection(std::uint64_t subclassInstanceSoid,
+                                              std::uint8_t requestedEntry,
+                                              PendingSubclassSelection& mutation) noexcept;
+
+/** Produces the complete uncommitted account after-image for a prepared subclass selection. */
+[[nodiscard]] bool preview_subclass_selection(const PendingSubclassSelection& mutation,
+                                              AccountState& after) noexcept;
+
+/** Commits a prepared subclass selection behind the exact full-character staleness guard. */
+[[nodiscard]] bool commit_subclass_selection(PendingSubclassSelection& mutation) noexcept;
 
 /** Prepares one complete native item-state value for an owned selected-character instance. */
 [[nodiscard]] bool prepare_item_state(std::uint64_t targetInstanceSoid,

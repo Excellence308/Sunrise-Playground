@@ -970,6 +970,60 @@ void report_item_state(std::string_view stage,
     }
 }
 
+/** Records one installed-data-resolved subclass socket-entry transition. */
+void report_subclass_selection(std::string_view stage,
+                               std::string_view result,
+                               std::string_view reason,
+                               std::uint64_t characterSoid,
+                               std::uint64_t subclassInstanceSoid,
+                               std::uint16_t definitionIndex,
+                               std::uint16_t socketEntryListIndex,
+                               std::uint8_t requestedEntry,
+                               std::uint8_t selectedEntry,
+                               std::uint8_t selectedGroup,
+                               SubclassAbilityField field) noexcept {
+    const auto fieldName = [field]() noexcept -> std::string_view {
+        switch (field) {
+        case SubclassAbilityField::movement:
+            return "movement";
+        case SubclassAbilityField::grenade:
+            return "grenade";
+        case SubclassAbilityField::melee:
+            return "melee";
+        case SubclassAbilityField::classAbility:
+            return "class";
+        }
+        return "unknown";
+    }();
+    std::array<char, core::log::kLineCapacity> line{};
+    const int count = std::snprintf(
+        line.data(),
+        line.size(),
+        "ev=subclass_select stage=%.*s result=%.*s reason=%.*s character=0x%llX "
+        "instance=0x%llX definition=%u socket_list=%u requested_entry=%u selected_entry=%u "
+        "group=%u field=%.*s",
+        static_cast<int>(stage.size()),
+        stage.data(),
+        static_cast<int>(result.size()),
+        result.data(),
+        static_cast<int>(reason.size()),
+        reason.data(),
+        static_cast<unsigned long long>(characterSoid),
+        static_cast<unsigned long long>(subclassInstanceSoid),
+        static_cast<unsigned>(definitionIndex),
+        static_cast<unsigned>(socketEntryListIndex),
+        static_cast<unsigned>(requestedEntry),
+        static_cast<unsigned>(selectedEntry),
+        static_cast<unsigned>(selectedGroup),
+        static_cast<int>(fieldName.size()),
+        fieldName.data());
+    if (count > 0) {
+        core::log::write(core::log::Channel::state,
+                         result == "ok" ? core::log::Level::debug : core::log::Level::warn,
+                         {line.data(), static_cast<std::size_t>(count)});
+    }
+}
+
 /** Exact stationary-item comparison, including its inventory mutation generation. */
 [[nodiscard]] bool same_stationary_item(const authored_inventory::Item& left,
                                         const authored_inventory::Item& right) noexcept {
@@ -990,6 +1044,7 @@ void report_item_state(std::string_view stage,
         || left.superAbilityEntry != right.superAbilityEntry
         || left.meleeAbilityEntry != right.meleeAbilityEntry
         || left.classAbilityEntry != right.classAbilityEntry
+        || left.acquiredSubclassAbilityMask != right.acquiredSubclassAbilityMask
         || left.nextInventorySerial != right.nextInventorySerial
         || left.inventory.count != right.inventory.count) {
         return false;
@@ -1116,6 +1171,290 @@ character_item_at(CharacterState& character, const CharacterItemLocation& locati
         sockets.plugs[lane] = plug.definitionHash;
     }
     return authored_inventory::valid(sockets);
+}
+
+/** @return The ability-bucket key authored by one character. */
+[[nodiscard]] build_data::abilities::Selection
+ability_selection_of(const CharacterState& character) noexcept {
+    return {character.movementAbilityEntry,
+            character.grenadeAbilityEntry,
+            character.superAbilityEntry,
+            character.meleeAbilityEntry,
+            character.classAbilityEntry};
+}
+
+/** Writes one canonical subclass entry into its semantic character field. */
+void set_subclass_field(CharacterState& character,
+                        SubclassAbilityField field,
+                        std::uint8_t entry) noexcept {
+    switch (field) {
+    case SubclassAbilityField::movement:
+        character.movementAbilityEntry = entry;
+        break;
+    case SubclassAbilityField::grenade:
+        character.grenadeAbilityEntry = entry;
+        break;
+    case SubclassAbilityField::melee:
+        character.meleeAbilityEntry = entry;
+        break;
+    case SubclassAbilityField::classAbility:
+        character.classAbilityEntry = entry;
+        break;
+    }
+}
+
+/** Returns every ready entry that belongs to one selectable authored plug source. */
+[[nodiscard]] std::uint64_t
+acquired_source_mask(const build_data::socket_entry_lists::Definition& definition,
+                     const build_data::socket_entry_lists::EntryTable& table,
+                     std::uint8_t selectedEntry) noexcept {
+    namespace lists = build_data::socket_entry_lists;
+    if (selectedEntry >= definition.entryCount) {
+        return 0;
+    }
+    const lists::Entry& selected = table.entries[selectedEntry];
+    if (selected.group == lists::kNoEntryGroup || selected.plugSource == lists::kNoPlugSource) {
+        return 0;
+    }
+    std::uint64_t mask = 0;
+    for (std::size_t entry = 0; entry < definition.entryCount; ++entry) {
+        const std::uint64_t bit = std::uint64_t{1} << entry;
+        const lists::Entry& candidate = table.entries[entry];
+        if ((definition.readyMask & bit) != 0 && candidate.group == selected.group
+            && candidate.plugSource == selected.plugSource) {
+            mask |= bit;
+        }
+    }
+    return mask;
+}
+
+/** Checks every identity and before/after field of two prepared subclass transitions. */
+[[nodiscard]] bool same_subclass_transition(const PendingSubclassSelection& left,
+                                            const PendingSubclassSelection& right) noexcept {
+    return left.accountSoid == right.accountSoid && left.characterSoid == right.characterSoid
+           && left.subclassInstanceSoid == right.subclassInstanceSoid
+           && left.subclassDefinitionHash == right.subclassDefinitionHash
+           && left.selectedPlugSource == right.selectedPlugSource
+           && left.characterIndex == right.characterIndex
+           && left.subclassDefinitionIndex == right.subclassDefinitionIndex
+           && left.socketEntryListIndex == right.socketEntryListIndex
+           && left.requestedEntry == right.requestedEntry
+           && left.selectedEntry == right.selectedEntry
+           && left.selectedGroup == right.selectedGroup && left.field == right.field
+           && left.prepared == right.prepared
+           && same_character(left.beforeCharacter, right.beforeCharacter)
+           && same_character(left.afterCharacter, right.afterCharacter);
+}
+
+/** Stages one canonical subclass selection over an already validated account snapshot. */
+[[nodiscard]] bool stage_subclass_selection(const AccountState& snapshot,
+                                            std::size_t characterIndex,
+                                            std::uint64_t subclassInstanceSoid,
+                                            std::uint8_t requestedEntry,
+                                            PendingSubclassSelection& mutation) noexcept {
+    namespace lists = build_data::socket_entry_lists;
+    mutation = {};
+    build_data::items::Definition subclassDefinition{};
+    item_details::Definition detail{};
+    lists::Definition socketList{};
+    lists::EntryTable entryTable{};
+    SubclassAbilityField field = SubclassAbilityField::movement;
+    std::uint8_t selectedEntry = 0;
+    std::uint8_t selectedGroup = lists::kNoEntryGroup;
+    const auto fail = [&](std::string_view reason) noexcept {
+        const std::uint64_t characterSoid = characterIndex < snapshot.characterCount
+                                                ? snapshot.characters[characterIndex].soid
+                                                : 0;
+        report_subclass_selection("stage_internal",
+                                  "fail",
+                                  reason,
+                                  characterSoid,
+                                  subclassInstanceSoid,
+                                  subclassDefinition.definitionIndex,
+                                  detail.socketEntryListIndex,
+                                  requestedEntry,
+                                  selectedEntry,
+                                  selectedGroup,
+                                  field);
+        mutation = {};
+        return false;
+    };
+    if (!account::valid(snapshot) || characterIndex >= snapshot.characterCount
+        || subclassInstanceSoid == 0 || requestedEntry >= lists::kEntryCapacity) {
+        return fail("request_or_account");
+    }
+    const CharacterState& before = snapshot.characters[characterIndex];
+    if (!before.selected || before.soid == 0) {
+        return fail("selected_character");
+    }
+    constexpr std::size_t kSubclassSlot =
+        static_cast<std::size_t>(authored_inventory::EquipmentSlot::subclass);
+    const auto& subclass = before.equipment.slots[kSubclassSlot];
+    if (!subclass.has_value() || subclass->instanceSoid != subclassInstanceSoid
+        || !build_data::find_item_definition_hash(subclass->definitionHash, subclassDefinition)
+        || subclassDefinition.definitionHash != subclass->definitionHash
+        || !build_data::find_configured_item_detail(subclassDefinition.definitionIndex, detail)
+        || detail.definitionIndex != subclassDefinition.definitionIndex
+        || detail.definitionHash != subclassDefinition.definitionHash
+        || detail.bucketId != subclassDefinition.bucketId || !detail.equipmentSlot.has_value()
+        || *detail.equipmentSlot < 0
+        || !build_data::find_socket_entry_list(detail.socketEntryListIndex, socketList)
+        || !build_data::find_socket_entry_table(detail.socketEntryListIndex, entryTable)
+        || socketList.definitionIndex != detail.socketEntryListIndex
+        || entryTable.definitionIndex != detail.socketEntryListIndex
+        || requestedEntry >= socketList.entryCount
+        || (socketList.readyMask & (std::uint64_t{1} << requestedEntry)) == 0) {
+        return fail("subclass_or_entry");
+    }
+
+    const lists::Entry& requested = entryTable.entries[requestedEntry];
+    selectedGroup = requested.group;
+    if (requested.plugSource == lists::kNoPlugSource
+        || requested.group == lists::kNoEntryGroup) {
+        return fail("unselectable_entry");
+    }
+
+    const std::array<std::uint8_t, 4> configured{
+        before.movementAbilityEntry,
+        before.grenadeAbilityEntry,
+        before.meleeAbilityEntry,
+        before.classAbilityEntry,
+    };
+    const std::array<SubclassAbilityField, 4> fields{
+        SubclassAbilityField::movement,
+        SubclassAbilityField::grenade,
+        SubclassAbilityField::melee,
+        SubclassAbilityField::classAbility,
+    };
+    std::size_t matchingFields = 0;
+    std::uint8_t previousEntry = static_cast<std::uint8_t>(lists::kEntryCapacity);
+    std::uint32_t previousPlugSource = lists::kNoPlugSource;
+    for (std::size_t index = 0; index < configured.size(); ++index) {
+        if (configured[index] >= socketList.entryCount) {
+            return fail("configured_entry");
+        }
+        const lists::Entry& current = entryTable.entries[configured[index]];
+        if (current.plugSource == lists::kNoPlugSource
+            || current.group == lists::kNoEntryGroup) {
+            return fail("configured_group");
+        }
+        if (current.group == requested.group) {
+            ++matchingFields;
+            field = fields[index];
+            previousEntry = configured[index];
+            previousPlugSource = current.plugSource;
+        }
+    }
+    if (matchingFields != 1) {
+        return fail("ambiguous_group");
+    }
+    if (previousPlugSource == requested.plugSource) {
+        return fail("already_selected");
+    }
+
+    selectedEntry = static_cast<std::uint8_t>(lists::kEntryCapacity);
+    for (std::size_t entry = 0; entry < socketList.entryCount; ++entry) {
+        const lists::Entry& candidate = entryTable.entries[entry];
+        if ((socketList.readyMask & (std::uint64_t{1} << entry)) != 0
+            && candidate.group == requested.group
+            && candidate.plugSource == requested.plugSource) {
+            CharacterState candidateCharacter = before;
+            set_subclass_field(
+                candidateCharacter, field, static_cast<std::uint8_t>(entry));
+            build_data::abilities::Definition abilityBuckets{};
+            if (build_data::find_ability_buckets(detail.socketEntryListIndex,
+                                                 ability_selection_of(candidateCharacter),
+                                                 abilityBuckets)) {
+                selectedEntry = static_cast<std::uint8_t>(entry);
+                break;
+            }
+        }
+    }
+    if (selectedEntry >= socketList.entryCount) {
+        return fail("resolved_entry");
+    }
+
+    family4_loadout::ResolvedLoadout beforeLoadout{};
+    if (!family4_loadout::resolve(snapshot, characterIndex, beforeLoadout)) {
+        return fail("before_loadout");
+    }
+    const family4_loadout::ResolvedItem* beforeSubclass = nullptr;
+    for (std::size_t index = 0; index < beforeLoadout.itemCount; ++index) {
+        const auto& item = beforeLoadout.items[index];
+        if (item.instance.instanceSoid == subclassInstanceSoid) {
+            if (beforeSubclass != nullptr) {
+                return fail("duplicate_subclass");
+            }
+            beforeSubclass = &item;
+        }
+    }
+    if (beforeSubclass == nullptr || !beforeSubclass->equipped
+        || beforeSubclass->instance.baseDefinitionIndex != subclassDefinition.definitionIndex
+        || beforeSubclass->instance.socketEntryListIndex != detail.socketEntryListIndex) {
+        return fail("before_subclass");
+    }
+
+    CharacterState after = before;
+    set_subclass_field(after, field, selectedEntry);
+    const std::uint64_t previousAcquired =
+        acquired_source_mask(socketList, entryTable, previousEntry);
+    const std::uint64_t selectedAcquired =
+        acquired_source_mask(socketList, entryTable, selectedEntry);
+    if (previousAcquired == 0 || selectedAcquired == 0) {
+        return fail("acquired_mask");
+    }
+    after.acquiredSubclassAbilityMask |= previousAcquired | selectedAcquired;
+    AccountState candidate = snapshot;
+    candidate.characters[characterIndex] = after;
+    build_data::abilities::Definition abilityBuckets{};
+    family4_loadout::ResolvedLoadout afterLoadout{};
+    if (!account::valid(candidate)
+        || !build_data::find_ability_buckets(
+            detail.socketEntryListIndex, ability_selection_of(after), abilityBuckets)
+        || !family4_loadout::resolve(candidate, characterIndex, afterLoadout)
+        || afterLoadout.itemCount != beforeLoadout.itemCount) {
+        return fail("candidate_or_abilities");
+    }
+    const family4_loadout::ResolvedItem* afterSubclass = nullptr;
+    for (std::size_t index = 0; index < afterLoadout.itemCount; ++index) {
+        const auto& item = afterLoadout.items[index];
+        if (item.instance.instanceSoid == subclassInstanceSoid) {
+            if (afterSubclass != nullptr) {
+                return fail("duplicate_after_subclass");
+            }
+            afterSubclass = &item;
+        }
+    }
+    if (afterSubclass == nullptr || !afterSubclass->equipped
+        || afterSubclass->equipmentSlot != beforeSubclass->equipmentSlot
+        || afterSubclass->inventoryRow != beforeSubclass->inventoryRow
+        || afterSubclass->instance.baseDefinitionIndex != subclassDefinition.definitionIndex
+        || afterSubclass->instance.socketEntryListIndex != detail.socketEntryListIndex
+        || !afterSubclass->instance.socketEntryContentsResolved
+        || afterSubclass->instance.socketEntryCount != socketList.entryCount
+        || afterSubclass->instance.socketEntryStates[requestedEntry]
+               != middleware::datagen::family4::instance::SocketEntryState::active
+        || afterSubclass->instance.socketEntryStates[selectedEntry]
+               != middleware::datagen::family4::instance::SocketEntryState::active) {
+        return fail("after_subclass");
+    }
+
+    mutation.beforeCharacter = before;
+    mutation.afterCharacter = after;
+    mutation.accountSoid = snapshot.primarySoid;
+    mutation.characterSoid = before.soid;
+    mutation.subclassInstanceSoid = subclassInstanceSoid;
+    mutation.subclassDefinitionHash = subclassDefinition.definitionHash;
+    mutation.selectedPlugSource = requested.plugSource;
+    mutation.characterIndex = characterIndex;
+    mutation.subclassDefinitionIndex = subclassDefinition.definitionIndex;
+    mutation.socketEntryListIndex = detail.socketEntryListIndex;
+    mutation.requestedEntry = requestedEntry;
+    mutation.selectedEntry = selectedEntry;
+    mutation.selectedGroup = selectedGroup;
+    mutation.field = field;
+    mutation.prepared = true;
+    return true;
 }
 
 /** Stages the canonical socket-only after-image over one already validated account snapshot. */
@@ -2722,6 +3061,171 @@ bool commit_item_dismantle(PendingItemDismantle& mutation) noexcept {
                      prepared.equipmentSlot,
                      prepared.movedInventoryItemCount,
                      prepared.afterCharacter.nextInventorySerial);
+    return true;
+}
+
+/** Prepares one checked subclass socket-entry selection without publishing account State. */
+bool prepare_subclass_selection(std::uint64_t subclassInstanceSoid,
+                                std::uint8_t requestedEntry,
+                                PendingSubclassSelection& mutation) noexcept {
+    mutation = {};
+    const AccountState snapshot = account_snapshot();
+    std::size_t characterIndex = snapshot.characterCount;
+    if (account::valid(snapshot)) {
+        for (std::size_t index = 0; index < snapshot.characterCount; ++index) {
+            if (snapshot.characters[index].selected) {
+                characterIndex = index;
+                break;
+            }
+        }
+    }
+    if (characterIndex >= snapshot.characterCount
+        || !stage_subclass_selection(
+            snapshot, characterIndex, subclassInstanceSoid, requestedEntry, mutation)) {
+        report_subclass_selection("prepare",
+                                  "fail",
+                                  "selection_subclass_or_entry",
+                                  0,
+                                  subclassInstanceSoid,
+                                  0,
+                                  0,
+                                  requestedEntry,
+                                  0,
+                                  build_data::socket_entry_lists::kNoEntryGroup,
+                                  SubclassAbilityField::movement);
+        mutation = {};
+        return false;
+    }
+    report_subclass_selection("prepare",
+                              "ok",
+                              "ready",
+                              mutation.characterSoid,
+                              mutation.subclassInstanceSoid,
+                              mutation.subclassDefinitionIndex,
+                              mutation.socketEntryListIndex,
+                              mutation.requestedEntry,
+                              mutation.selectedEntry,
+                              mutation.selectedGroup,
+                              mutation.field);
+    return true;
+}
+
+/** Produces the complete account after-image while the prepared subclass action remains current. */
+bool preview_subclass_selection(const PendingSubclassSelection& mutation,
+                                AccountState& after) noexcept {
+    after = {};
+    if (!mutation.prepared || mutation.accountSoid == 0 || mutation.characterSoid == 0
+        || mutation.subclassInstanceSoid == 0 || mutation.characterIndex >= kCharacterCapacity
+        || mutation.subclassDefinitionHash == authored_inventory::kNoDefinitionHash
+        || mutation.requestedEntry >= build_data::socket_entry_lists::kEntryCapacity
+        || mutation.selectedEntry >= build_data::socket_entry_lists::kEntryCapacity
+        || mutation.selectedGroup == build_data::socket_entry_lists::kNoEntryGroup
+        || mutation.selectedPlugSource == build_data::socket_entry_lists::kNoPlugSource) {
+        return false;
+    }
+    const AccountState current = account_snapshot();
+    if (mutation.characterIndex >= current.characterCount
+        || current.primarySoid != mutation.accountSoid
+        || !same_character(current.characters[mutation.characterIndex], mutation.beforeCharacter)) {
+        return false;
+    }
+    PendingSubclassSelection canonical{};
+    if (!stage_subclass_selection(current,
+                                  mutation.characterIndex,
+                                  mutation.subclassInstanceSoid,
+                                  mutation.requestedEntry,
+                                  canonical)
+        || !same_subclass_transition(canonical, mutation)) {
+        return false;
+    }
+    after = current;
+    after.characters[mutation.characterIndex] = canonical.afterCharacter;
+    family4_loadout::ResolvedLoadout resolved{};
+    return account::valid(after)
+           && family4_loadout::resolve(after, mutation.characterIndex, resolved);
+}
+
+/** Commits one prepared subclass selection behind exact account and character guards. */
+bool commit_subclass_selection(PendingSubclassSelection& mutation) noexcept {
+    const PendingSubclassSelection prepared = mutation;
+    mutation = {};
+    const auto fail = [&prepared](std::string_view reason) noexcept {
+        report_subclass_selection("commit",
+                                  "fail",
+                                  reason,
+                                  prepared.characterSoid,
+                                  prepared.subclassInstanceSoid,
+                                  prepared.subclassDefinitionIndex,
+                                  prepared.socketEntryListIndex,
+                                  prepared.requestedEntry,
+                                  prepared.selectedEntry,
+                                  prepared.selectedGroup,
+                                  prepared.field);
+        return false;
+    };
+    if (!prepared.prepared || prepared.accountSoid == 0 || prepared.characterSoid == 0
+        || prepared.subclassInstanceSoid == 0 || prepared.characterIndex >= kCharacterCapacity
+        || prepared.beforeCharacter.soid != prepared.characterSoid
+        || prepared.afterCharacter.soid != prepared.characterSoid
+        || prepared.subclassDefinitionHash == authored_inventory::kNoDefinitionHash
+        || prepared.requestedEntry >= build_data::socket_entry_lists::kEntryCapacity
+        || prepared.selectedEntry >= build_data::socket_entry_lists::kEntryCapacity
+        || prepared.selectedGroup == build_data::socket_entry_lists::kNoEntryGroup
+        || prepared.selectedPlugSource == build_data::socket_entry_lists::kNoPlugSource) {
+        return fail("mutation");
+    }
+
+    report_subclass_selection("commit_begin",
+                              "ok",
+                              "ready",
+                              prepared.characterSoid,
+                              prepared.subclassInstanceSoid,
+                              prepared.subclassDefinitionIndex,
+                              prepared.socketEntryListIndex,
+                              prepared.requestedEntry,
+                              prepared.selectedEntry,
+                              prepared.selectedGroup,
+                              prepared.field);
+    AcquireSRWLockExclusive(&runtime::storage::g_stateLock);
+    AccountState candidate = runtime::storage::g_state.account;
+    if (prepared.characterIndex >= candidate.characterCount
+        || candidate.primarySoid != prepared.accountSoid
+        || !same_character(candidate.characters[prepared.characterIndex],
+                           prepared.beforeCharacter)) {
+        ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
+        return fail("stale");
+    }
+    PendingSubclassSelection canonical{};
+    if (!stage_subclass_selection(candidate,
+                                  prepared.characterIndex,
+                                  prepared.subclassInstanceSoid,
+                                  prepared.requestedEntry,
+                                  canonical)
+        || !same_subclass_transition(canonical, prepared)) {
+        ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
+        return fail("transition");
+    }
+    candidate.characters[prepared.characterIndex] = canonical.afterCharacter;
+    family4_loadout::ResolvedLoadout checked{};
+    if (!account::valid(candidate)
+        || !family4_loadout::resolve(candidate, prepared.characterIndex, checked)) {
+        ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
+        return fail("account_or_resolve");
+    }
+    runtime::storage::g_state.account = candidate;
+    ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
+
+    report_subclass_selection("commit_end",
+                              "ok",
+                              "published",
+                              prepared.characterSoid,
+                              prepared.subclassInstanceSoid,
+                              prepared.subclassDefinitionIndex,
+                              prepared.socketEntryListIndex,
+                              prepared.requestedEntry,
+                              prepared.selectedEntry,
+                              prepared.selectedGroup,
+                              prepared.field);
     return true;
 }
 

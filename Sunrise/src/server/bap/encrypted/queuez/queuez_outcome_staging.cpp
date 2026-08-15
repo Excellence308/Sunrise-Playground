@@ -102,6 +102,67 @@ bool stage_service_outcome(Scratch& scratch,
             }
             after = refresh.after;
         }
+    } else if (outcome.hasSubclassSelection) {
+        // Body processing already staged the exact +1 revision promised by opcode 801. Publish a
+        // single upsert for the resident subclass instance, then refresh subscribed appearance
+        // copies because their ability banks are derived from the same character after-image.
+        const SubclassSelection& selection = outcome.subclassSelectionUpdate;
+        bool preservedManifest =
+            selection.after.family4ResidentCount == before.family4ResidentCount;
+        std::size_t targetMatches = 0;
+        for (std::size_t index = 0; preservedManifest && index < before.family4ResidentCount;
+             ++index) {
+            const ResidentObject& resident = before.family4Residents[index];
+            const ResidentObject& staged = selection.after.family4Residents[index];
+            preservedManifest = staged.objectSoid == resident.objectSoid
+                                && staged.definitionId == resident.definitionId;
+            targetMatches += static_cast<std::size_t>(
+                resident.objectSoid == selection.subclassInstanceSoid
+                && resident.definitionId == selection.itemInstanceDefinitionId);
+        }
+        if (!valid(selection.after) || !preservedManifest || targetMatches != 1
+            || selection.accountSoid != outcome.subclassSelection.accountSoid
+            || selection.characterSoid != outcome.subclassSelection.characterSoid
+            || selection.subclassInstanceSoid
+                   != outcome.subclassSelection.subclassInstanceSoid
+            || selection.after.family4RootSoid != before.family4RootSoid
+            || before.family4Version == (std::numeric_limits<std::int32_t>::max)()
+            || selection.after.family4Version != before.family4Version + 1
+            || !push::append_subclass_selection_notification(
+                scratch, selection, outcome.subclassSelection, key, nonce, response, written)) {
+            core::log::write(core::log::Channel::server,
+                             core::log::Level::warn,
+                             "ev=queuez stage=subclass_select result=fail");
+            return false;
+        }
+        middleware::secure_channel::advance_nonce(nonce);
+        after = selection.after;
+        if (after.family0Active) {
+            CharacterAppearanceRefresh refresh{};
+            if (!stage_character_appearance_refresh(
+                    after, outcome.subclassSelection.characterSoid, refresh)
+                || !push::append_subclass_appearance_refresh_notification(
+                    scratch, refresh, outcome.subclassSelection, key, nonce, response, written)) {
+                core::log::write(core::log::Channel::server,
+                                 core::log::Level::warn,
+                                 "ev=queuez stage=subclass_appearance result=fail");
+                return false;
+            }
+            after = refresh.after;
+        }
+        if (after.family3Active) {
+            RosterAppearanceRefresh refresh{};
+            if (!stage_roster_appearance_refresh(
+                    after, outcome.subclassSelection.characterSoid, false, refresh)
+                || !push::append_subclass_roster_refresh_notification(
+                    scratch, refresh, outcome.subclassSelection, key, nonce, response, written)) {
+                core::log::write(core::log::Channel::server,
+                                 core::log::Level::warn,
+                                 "ev=queuez stage=subclass_roster result=fail");
+                return false;
+            }
+            after = refresh.after;
+        }
     } else if (outcome.hasItemState) {
         // Item-state bits live in the selected-character inventory row. Publish only that
         // resident character body; item-instance, appearance, roster and manifest are unchanged.

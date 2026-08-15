@@ -21,6 +21,7 @@ bool commit(ServiceOutcome& outcome, Publication& publication) noexcept {
                                    + static_cast<unsigned>(outcome.hasActivityTransaction)
                                    + static_cast<unsigned>(outcome.hasMatchmakingMutation)
                                    + static_cast<unsigned>(outcome.hasEquipmentSwap)
+                                   + static_cast<unsigned>(outcome.hasSubclassSelection)
                                    + static_cast<unsigned>(outcome.hasSocketPlug)
                                    + static_cast<unsigned>(outcome.hasItemState)
                                    + static_cast<unsigned>(outcome.hasItemAcquisition)
@@ -73,6 +74,15 @@ bool commit(ServiceOutcome& outcome, Publication& publication) noexcept {
                          committed ? core::log::Level::debug : core::log::Level::warn,
                          committed ? "ev=equip stage=transaction_commit result=ok"
                                    : "ev=equip stage=transaction_commit result=fail");
+        return committed;
+    }
+    if (outcome.hasSubclassSelection) {
+        const bool committed =
+            state::commit_subclass_selection(outcome.subclassSelection);
+        core::log::write(core::log::Channel::server,
+                         committed ? core::log::Level::debug : core::log::Level::warn,
+                         committed ? "ev=subclass_select stage=transaction_commit result=ok"
+                                   : "ev=subclass_select stage=transaction_commit result=fail");
         return committed;
     }
     if (outcome.hasItemAcquisition) {

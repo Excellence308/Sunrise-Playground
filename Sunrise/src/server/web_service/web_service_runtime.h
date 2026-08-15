@@ -31,6 +31,9 @@ struct Outcome {
     /** Opcode 903 or 1901 prepared one exact selected-character ordinary-socket selection. */
     bool hasSocketPlug{};
     state::PendingSocketPlug socketPlug{};
+    /** Opcode 801 prepared one installed-data-resolved subclass socket-entry selection. */
+    bool hasSubclassSelection{};
+    state::PendingSubclassSelection subclassSelection{};
     /** Opcode 406 prepared one complete accumulated item-state value. */
     bool hasItemState{};
     state::PendingItemState itemState{};
@@ -67,6 +70,12 @@ void report_socket_plug_response(const middleware::web_service::Message& message
                                  std::uint8_t socketLane,
                                  std::uint16_t plugDefinitionIndex,
                                  std::span<const std::byte> response) noexcept;
+
+/** Records a subclass-selection reply after its exact item-instance revision is known. */
+void report_subclass_selection_response(const middleware::web_service::Message& message,
+                                        std::int32_t family4Version,
+                                        const state::PendingSubclassSelection& mutation,
+                                        std::span<const std::byte> response) noexcept;
 
 /**
  * Answers one whole supported Web Service request body.

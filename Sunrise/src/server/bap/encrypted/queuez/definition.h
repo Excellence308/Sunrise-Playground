@@ -145,6 +145,15 @@ struct SocketPlug {
     bool updatesAccount{};
 };
 
+/** Validated subclass item-instance after-image for one ability socket-entry selection. */
+struct SubclassSelection {
+    SessionState after{};
+    std::uint32_t itemInstanceDefinitionId{};
+    std::uint64_t accountSoid{};
+    std::uint64_t characterSoid{};
+    std::uint64_t subclassInstanceSoid{};
+};
+
 /** Validated profile-stack acquisition after-image for an account upsert and optional resident. */
 struct ProfileItemAcquisition {
     SessionState after{};
