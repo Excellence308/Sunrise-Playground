@@ -28,6 +28,19 @@ bool valid(std::span<const Definition> definitions) noexcept {
         return false;
     }
     for (std::size_t row = 0; row < definitions.size(); ++row) {
+        constexpr std::uint16_t kSelectorMask =
+            static_cast<std::uint16_t>((std::uint16_t{1} << kBucketCapacity) - 1U);
+        if ((definitions[row].selectorMask & ~kSelectorMask) != 0) {
+            return false;
+        }
+        for (std::size_t bucket = 0; bucket < kBucketCapacity; ++bucket) {
+            const bool selected =
+                (definitions[row].selectorMask & (std::uint16_t{1} << bucket)) != 0;
+            if ((selected && definitions[row].selectorEntries[bucket] >= kSelectorEntryCapacity)
+                || (!selected && definitions[row].selectorEntries[bucket] != 0)) {
+                return false;
+            }
+        }
         for (std::size_t other = row + 1; other < definitions.size(); ++other) {
             if (same_key(definitions[row], definitions[other])) {
                 return false;

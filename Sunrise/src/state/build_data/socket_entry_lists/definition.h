@@ -53,6 +53,40 @@ struct EntryTable {
     std::array<Entry, kEntryCapacity> entries{};
 };
 
+/**
+ * Resolves the unique source-less kind-34 entry used by the character summary.
+ * @param definition Installed socket-entry-list mapping.
+ * @param table Per-entry inputs for the same list.
+ * @param output Receives the primary super selector.
+ * @return True when the table contains exactly one primary super entry.
+ */
+[[nodiscard]] inline bool primary_super_entry(const Definition& definition,
+                                              const EntryTable& table,
+                                              std::uint8_t& output) noexcept {
+    output = static_cast<std::uint8_t>(kEntryCapacity);
+    if (table.definitionIndex != definition.definitionIndex
+        || definition.entryCount > kEntryCapacity) {
+        return false;
+    }
+
+    std::size_t primary = definition.entryCount;
+    for (std::size_t entry = 0; entry < definition.entryCount; ++entry) {
+        const Entry& candidate = table.entries[entry];
+        if (candidate.plugSource != kNoPlugSource || candidate.kind != kSuperEntryKind) {
+            continue;
+        }
+        if (primary != definition.entryCount) {
+            return false;
+        }
+        primary = entry;
+    }
+    if (primary == definition.entryCount) {
+        return false;
+    }
+    output = static_cast<std::uint8_t>(primary);
+    return true;
+}
+
 /** Lists that may carry a super lane. Only 9 subclasses ship, so this is plenty. */
 inline constexpr std::size_t kEntryTableCapacity = 32;
 

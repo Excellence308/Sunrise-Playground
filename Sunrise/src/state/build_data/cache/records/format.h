@@ -28,7 +28,7 @@ inline constexpr std::array<char, 8> kCacheMagic{'S', 'U', 'N', 'R', 'I', 'S', '
  * Current build-data cache format. An older cache is rebuilt rather than read, so a bump needs
  * no other edit. Bump it whenever a domain's stored shape changes.
  */
-inline constexpr std::uint32_t kCacheFormatVersion = 33;
+inline constexpr std::uint32_t kCacheFormatVersion = 34;
 /** Signed -1 on disk means there is no equipment slot. */
 inline constexpr std::int8_t kAbsentEquipmentSlot = -1;
 /** The standard 64-bit FNV-1a offset basis starts the payload checksum. */
@@ -214,6 +214,8 @@ struct AbilityBucketRecord {
     std::uint8_t meleeEntry{};
     std::uint8_t classEntry{};
     std::uint8_t overflowCount{};
+    std::uint16_t selectorMask{};
+    std::array<std::uint8_t, abilities::kBucketCapacity> selectorEntries{};
     std::array<std::uint8_t, abilities::kBucketCapacity> bucketKinds{};
     std::array<std::uint8_t, abilities::kBucketCapacity> bucketHashCounts{};
     std::array<std::uint32_t, abilities::kBucketCapacity * abilities::kBucketHashCapacity>
@@ -425,8 +427,8 @@ static_assert(sizeof(RosterGroupRecord)
                      + 2 * scenarios::kRosterSlotCapacity * sizeof(std::uint8_t));
 static_assert(sizeof(ProgressionRecord) == sizeof(std::uint16_t) + 2 * sizeof(std::uint8_t));
 static_assert(sizeof(AbilityBucketRecord)
-              == sizeof(std::uint16_t) + 6 * sizeof(std::uint8_t)
-                     + 2 * abilities::kBucketCapacity * sizeof(std::uint8_t)
+              == 2 * sizeof(std::uint16_t) + 6 * sizeof(std::uint8_t)
+                     + 3 * abilities::kBucketCapacity * sizeof(std::uint8_t)
                      + (abilities::kBucketCapacity * abilities::kBucketHashCapacity
                         + abilities::kOverflowCapacity)
                            * sizeof(std::uint32_t));
