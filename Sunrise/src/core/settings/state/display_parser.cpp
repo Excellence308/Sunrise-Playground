@@ -9,6 +9,8 @@ bool Parser::display_settings(state::account::settings::Display& output) noexcep
     enum class Field : std::size_t {
         brightness,
         showFps,
+        verticalSync,
+        fieldOfView,
         hdrMode,
         calibrationPrimary,
         calibrationAlpha,
@@ -42,6 +44,14 @@ bool Parser::display_settings(state::account::settings::Display& output) noexcep
             }
         } else if (key == "show_fps") {
             if (!mark(Field::showFps) || !boolean(output.showFps)) {
+                return false;
+            }
+        } else if (key == "vertical_sync") {
+            if (!mark(Field::verticalSync) || !boolean(output.verticalSync)) {
+                return false;
+            }
+        } else if (key == "field_of_view") {
+            if (!mark(Field::fieldOfView) || !signed_32(output.fieldOfView)) {
                 return false;
             }
         } else if (key == "hdr_mode") {
