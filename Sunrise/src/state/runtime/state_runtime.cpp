@@ -89,6 +89,17 @@ template <std::size_t Size>
     for (std::size_t characterIndex = 0; characterIndex < accountState.characterCount;
          ++characterIndex) {
         CharacterState& character = accountState.characters[characterIndex];
+        constexpr std::size_t kSubclassSlot =
+            static_cast<std::size_t>(account::inventory::EquipmentSlot::subclass);
+        auto& subclass = character.equipment.slots[kSubclassSlot];
+        if (subclass.has_value()) {
+            subclass->subclass = {character.movementAbilityEntry,
+                                  character.grenadeAbilityEntry,
+                                  character.superAbilityEntry,
+                                  character.meleeAbilityEntry,
+                                  character.classAbilityEntry,
+                                  character.acquiredSubclassAbilityMask};
+        }
         std::uint32_t next = 0;
         for (std::optional<account::inventory::Item>& item : character.equipment.slots) {
             if (item.has_value()) {

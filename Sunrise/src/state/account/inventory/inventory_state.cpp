@@ -71,10 +71,20 @@ bool valid(const Sockets& sockets) noexcept {
     return true;
 }
 
+/** Checks the five bounded selectors of one per-subclass state. */
+bool valid(const SubclassState& subclass) noexcept {
+    return subclass.movementAbilityEntry <= kMaximumSubclassAbilityEntry
+           && subclass.grenadeAbilityEntry <= kMaximumSubclassAbilityEntry
+           && subclass.superAbilityEntry <= kMaximumSubclassAbilityEntry
+           && subclass.meleeAbilityEntry <= kMaximumSubclassAbilityEntry
+           && subclass.classAbilityEntry <= kMaximumSubclassAbilityEntry;
+}
+
 /** Checks one whole authored item without reading installed build data. */
 bool valid(const Item& item) noexcept {
     return item.instanceSoid != 0 && item.definitionHash != kNoDefinitionHash && item.level >= 0
-           && item.quantity > 0 && item.mutationSerial >= 0 && valid(item.sockets);
+           && item.quantity > 0 && item.mutationSerial >= 0 && valid(item.sockets)
+           && valid(item.subclass);
 }
 
 /** Checks every item present in the fixed semantic equipment array. */

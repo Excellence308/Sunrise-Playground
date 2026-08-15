@@ -196,9 +196,7 @@ read_investment_constants(const reader::Source& source,
                                          state::build_data::abilities::Definition& output) noexcept;
 
 /**
- * Builds one ability bucket row per distinct subclass and ability selection in use.
- * Two characters on the same subclass with the same ability selection publish identical
- * buckets, so the row is keyed by both and built once.
+ * Builds every ability bucket row for every installed subclass socket-entry list.
  * @param source Package source.
  * @param scratch Reader scratch.
  * @param root Investment root bytes.

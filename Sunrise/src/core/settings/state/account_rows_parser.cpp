@@ -10,6 +10,25 @@ constexpr std::uint64_t kMaximumCharacterLevel = (std::numeric_limits<std::uint8
 /** A destination definition hash is one unsigned 32-bit field. */
 constexpr std::uint64_t kMaximumDestinationHash = (std::numeric_limits<std::uint32_t>::max)();
 
+/** Copies the legacy character-level selection into its initially equipped subclass item. */
+[[nodiscard]] bool finalize_character(state::CharacterState& character, bool hasSoid) noexcept {
+    if (!hasSoid) {
+        return false;
+    }
+    constexpr std::size_t kSubclassSlot =
+        static_cast<std::size_t>(state::account::inventory::EquipmentSlot::subclass);
+    auto& subclass = character.equipment.slots[kSubclassSlot];
+    if (subclass.has_value()) {
+        subclass->subclass = {character.movementAbilityEntry,
+                              character.grenadeAbilityEntry,
+                              character.superAbilityEntry,
+                              character.meleeAbilityEntry,
+                              character.classAbilityEntry,
+                              character.acquiredSubclassAbilityMask};
+    }
+    return true;
+}
+
 } // namespace
 
 /** Parses the definition hashes and quantities credited by ordinary gear dismantles. */
@@ -278,7 +297,7 @@ bool Parser::character(state::CharacterState& output) noexcept {
             return false;
         }
         if (consume('}')) {
-            return hasSoid;
+            return finalize_character(output, hasSoid);
         }
         if (!consume(',')) {
             return false;

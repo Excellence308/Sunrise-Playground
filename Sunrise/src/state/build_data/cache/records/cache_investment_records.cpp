@@ -18,6 +18,8 @@ bool encode(const abilities::Definition& value, AbilityBucketRecord& record) noe
     record.meleeEntry = value.selection.meleeEntry;
     record.classEntry = value.selection.classEntry;
     record.overflowCount = value.overflowCount;
+    record.selectorMask = value.selectorMask;
+    record.selectorEntries = value.selectorEntries;
     record.overflow = value.overflow;
     for (std::size_t bucket = 0; bucket < abilities::kBucketCapacity; ++bucket) {
         record.bucketKinds[bucket] = value.buckets[bucket].kind;
@@ -43,6 +45,8 @@ bool decode(const AbilityBucketRecord& record, abilities::Definition& value) noe
     value.selection.meleeEntry = record.meleeEntry;
     value.selection.classEntry = record.classEntry;
     value.overflowCount = record.overflowCount;
+    value.selectorMask = record.selectorMask;
+    value.selectorEntries = record.selectorEntries;
     value.overflow = record.overflow;
     for (std::size_t bucket = 0; bucket < abilities::kBucketCapacity; ++bucket) {
         if (record.bucketHashCounts[bucket] > abilities::kBucketHashCapacity) {
