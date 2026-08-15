@@ -15,6 +15,8 @@ template <typename Value> struct Range {
 constexpr std::array<std::int8_t, 7> kButtonLayouts{0, 1, 2, 3, 5, 6, 9};
 /** The movement-layout menu stores 4 choices, 0 to 3. */
 constexpr Range<std::int8_t> kMovementModes{0, 3};
+/** Keybinding storage is either account (0) or this computer (1). */
+constexpr Range<std::int8_t> kKeyBindingStorage{0, 1};
 /** Controller sensitivity stores the 10 menu choices as 0 to 9. */
 constexpr Range<std::int8_t> kControllerSensitivity{0, 9};
 /** Mouse sensitivity accepts the menu's 1 to 100 scale. */
@@ -35,6 +37,8 @@ constexpr Range<std::int8_t> kAudioVolume{0, 10};
 
 /** Brightness stores the 7 menu choices, 0 to 6. */
 constexpr Range<std::int8_t> kBrightness{0, 6};
+/** Field of view exposes the target build's 55 through 105 range. */
+constexpr Range<std::int32_t> kFieldOfView{55, 105};
 /** The first unidentified calibration field uses the working renderer fallback. */
 constexpr float kCalibrationPrimary = 10000.0F;
 /** The second unidentified calibration field uses the working renderer alpha. */
@@ -90,6 +94,7 @@ template <typename Value, std::size_t Count>
 [[nodiscard]] bool valid_controls(const Controls& value) noexcept {
     return contains(kButtonLayouts, value.buttonLayout)
            && within(value.movementMode, kMovementModes)
+           && within(value.keyBindingStorage, kKeyBindingStorage)
            && within(value.controllerLookSensitivity, kControllerSensitivity)
            && within(value.mouseLookSensitivity, kMouseSensitivity)
            && within(value.adsSensitivityModifier, kAdsSensitivity)
@@ -115,7 +120,8 @@ template <typename Value, std::size_t Count>
  * @return True when every number belongs to its supported domain.
  */
 [[nodiscard]] bool valid_display(const Display& value) noexcept {
-    return within(value.brightness, kBrightness) && within(value.hdrMode, kTwoChoiceSelector)
+    return within(value.brightness, kBrightness) && within(value.fieldOfView, kFieldOfView)
+           && within(value.hdrMode, kTwoChoiceSelector)
            && value.calibrationPrimary == kCalibrationPrimary
            && value.calibrationAlpha == kCalibrationAlpha;
 }

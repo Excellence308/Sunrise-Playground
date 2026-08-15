@@ -13,6 +13,8 @@ inline constexpr std::int8_t kCompletedAudioMigrationVersion = 8;
 struct Controls {
     std::int8_t buttonLayout{};
     std::int8_t movementMode{};
+    /** 0 uses the account copy; 1 uses this computer's local keybindings. */
+    std::int8_t keyBindingStorage{};
     std::int8_t controllerLookSensitivity{};
     bool controllerInvertVertical{};
     bool controllerAutoLookCentering{};
@@ -47,6 +49,9 @@ struct Audio {
 struct Display {
     std::int8_t brightness{};
     bool showFps{};
+    bool verticalSync{};
+    /** Absolute field of view shown in the target build's display menu. */
+    std::int32_t fieldOfView{};
     std::int8_t hdrMode{};
     /** First unidentified renderer-calibration scalar. */
     float calibrationPrimary{};

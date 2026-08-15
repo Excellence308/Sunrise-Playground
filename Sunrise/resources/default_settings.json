@@ -199,6 +199,7 @@
         "controls": {
           "button_layout": 0,
           "movement_mode": 0,
+          "key_binding_storage": 1,
           "controller_look_sensitivity": 2,
           "controller_invert_vertical": false,
           "controller_auto_look_centering": false,
@@ -227,6 +228,8 @@
         "display": {
           "brightness": 3,
           "show_fps": false,
+          "vertical_sync": false,
+          "field_of_view": 105,
           "hdr_mode": 0,
           "calibration_primary": 10000.0,
           "calibration_alpha": 0.0
