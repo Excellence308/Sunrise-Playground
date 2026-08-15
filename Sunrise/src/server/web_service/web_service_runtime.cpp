@@ -16,6 +16,7 @@
 #include "../../middleware/web_service/messages/opcode503.h"
 #include "../../middleware/web_service/messages/opcode504.h"
 #include "../../middleware/web_service/messages/opcode601/opcode601_codec.h"
+#include "../../middleware/web_service/messages/opcode801.h"
 #include "../../middleware/web_service/messages/opcode903.h"
 #include "../../middleware/web_service/web_service_envelope.h"
 #include "../../state/account/account_state.h"
@@ -287,6 +288,42 @@ void report_socket_plug_response(const middleware::web_service::Message& message
     core::log::write(core::log::Channel::server, core::log::Level::debug, {line.data(), length});
 }
 
+/** Logs the exact opcode-801 status pair and subclass item revision it promises. */
+void report_subclass_selection_response(const middleware::web_service::Message& message,
+                                        std::int32_t family4Version,
+                                        const state::PendingSubclassSelection& mutation,
+                                        std::span<const std::byte> response) noexcept {
+    std::array<char, core::log::kLineCapacity> line{};
+    const int prefix = std::snprintf(
+        line.data(),
+        line.size(),
+        "ev=subclass_select stage=response result=ok opcode=%u transaction=%u "
+        "family_version=%d instance=0x%llX requested_entry=%u selected_entry=%u group=%u "
+        "bytes=%zu hex=",
+        static_cast<unsigned>(message.opcode),
+        static_cast<unsigned>(message.transactionId),
+        family4Version,
+        static_cast<unsigned long long>(mutation.subclassInstanceSoid),
+        static_cast<unsigned>(mutation.requestedEntry),
+        static_cast<unsigned>(mutation.selectedEntry),
+        static_cast<unsigned>(mutation.selectedGroup),
+        response.size());
+    if (prefix <= 0 || static_cast<std::size_t>(prefix) >= line.size()) {
+        return;
+    }
+    constexpr char kHex[] = "0123456789ABCDEF";
+    std::size_t length = static_cast<std::size_t>(prefix);
+    for (const std::byte byte : response) {
+        if (length + 2 >= line.size()) {
+            break;
+        }
+        const unsigned value = std::to_integer<unsigned>(byte);
+        line[length++] = kHex[(value >> 4U) & 0xFU];
+        line[length++] = kHex[value & 0xFU];
+    }
+    core::log::write(core::log::Channel::server, core::log::Level::debug, {line.data(), length});
+}
+
 /** One line carries the picked id and whether the selection moved. */
 constexpr std::size_t kSelectLineCapacity = 96;
 
@@ -476,6 +513,71 @@ void mutate_socket_plug(const middleware::web_service::Message& message,
         static_cast<unsigned>(mutation.plugBucketId),
         static_cast<unsigned>(mutation.targetEquipped),
         mutation.itemIndex);
+    if (count > 0) {
+        core::log::write(core::log::Channel::server,
+                         core::log::Level::info,
+                         {line.data(), static_cast<std::size_t>(count)});
+    }
+}
+
+/** Parses and prepares one exact selected-character opcode-801 subclass selection. */
+void mutate_subclass_selection(const middleware::web_service::Message& message,
+                               Outcome& outcome) noexcept {
+    middleware::web_service::messages::opcode801::Request request{};
+    if (!middleware::web_service::messages::opcode801::parse_request(message, request)) {
+        std::array<char, 192> line{};
+        const int count = std::snprintf(
+            line.data(),
+            line.size(),
+            "ev=ws801 stage=parse result=fail transaction=%u payload_bytes=%zu "
+            "instance=0x%llX entry=%u",
+            static_cast<unsigned>(message.transactionId),
+            message.payload.size(),
+            static_cast<unsigned long long>(request.subclassInstanceSoid),
+            static_cast<unsigned>(request.socketEntry));
+        if (count > 0) {
+            core::log::write(core::log::Channel::server,
+                             core::log::Level::warn,
+                             {line.data(), static_cast<std::size_t>(count)});
+        }
+        return;
+    }
+
+    state::PendingSubclassSelection mutation{};
+    if (!state::prepare_subclass_selection(
+            request.subclassInstanceSoid, request.socketEntry, mutation)) {
+        std::array<char, 192> line{};
+        const int count = std::snprintf(
+            line.data(),
+            line.size(),
+            "ev=ws801 stage=prepare result=fail transaction=%u instance=0x%llX entry=%u",
+            static_cast<unsigned>(message.transactionId),
+            static_cast<unsigned long long>(request.subclassInstanceSoid),
+            static_cast<unsigned>(request.socketEntry));
+        if (count > 0) {
+            core::log::write(core::log::Channel::server,
+                             core::log::Level::warn,
+                             {line.data(), static_cast<std::size_t>(count)});
+        }
+        return;
+    }
+
+    outcome.hasSubclassSelection = true;
+    outcome.subclassSelection = mutation;
+    std::array<char, 240> line{};
+    const int count = std::snprintf(
+        line.data(),
+        line.size(),
+        "ev=ws801 stage=prepare result=ok transaction=%u character=0x%llX instance=0x%llX "
+        "definition=%u socket_list=%u requested_entry=%u selected_entry=%u group=%u",
+        static_cast<unsigned>(message.transactionId),
+        static_cast<unsigned long long>(mutation.characterSoid),
+        static_cast<unsigned long long>(mutation.subclassInstanceSoid),
+        static_cast<unsigned>(mutation.subclassDefinitionIndex),
+        static_cast<unsigned>(mutation.socketEntryListIndex),
+        static_cast<unsigned>(mutation.requestedEntry),
+        static_cast<unsigned>(mutation.selectedEntry),
+        static_cast<unsigned>(mutation.selectedGroup));
     if (count > 0) {
         core::log::write(core::log::Channel::server,
                          core::log::Level::info,
@@ -1079,6 +1181,8 @@ bool consume(std::span<const std::byte> request,
         mutate_equipment(message, false, outcome);
     } else if (message.opcode == kUnequipOpcode) {
         mutate_equipment(message, true, outcome);
+    } else if (message.opcode == middleware::web_service::messages::opcode801::kOpcode) {
+        mutate_subclass_selection(message, outcome);
     } else if (message.opcode == middleware::web_service::messages::opcode903::kOpcode) {
         mutate_socket_plug(message, outcome);
     } else if (message.opcode == middleware::web_service::messages::opcode1901::kOpcode) {

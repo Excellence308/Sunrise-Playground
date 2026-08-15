@@ -66,7 +66,9 @@ void resolve_socket_states(
     for (std::size_t index = 0; index < definition.entryCount; ++index) {
         const std::uint64_t bit = std::uint64_t{1} << index;
         if ((definition.readyMask & bit) != 0) {
-            output[index] = instance::SocketEntryState::ready;
+            output[index] = (character.acquiredSubclassAbilityMask & bit) != 0
+                                ? instance::SocketEntryState::acquired
+                                : instance::SocketEntryState::ready;
         }
     }
     // Only a subclass keeps an entry table, so this lookup is what identifies one.

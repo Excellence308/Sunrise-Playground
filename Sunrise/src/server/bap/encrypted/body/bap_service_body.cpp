@@ -149,6 +149,39 @@ bool process(const ServiceRoute& route,
                 outcome.equipmentSwap = webOutcome.equipmentSwap;
             }
         }
+        if (webOutcome.hasSubclassSelection) {
+            // Opcode 801 completes at the exact Family-4 revision carrying the selected subclass
+            // socket entry. The resident manifest and equipped subclass identity stay unchanged.
+            if (!queuez::stage_subclass_selection(
+                    queuezState,
+                    webOutcome.subclassSelection.accountSoid,
+                    webOutcome.subclassSelection.characterSoid,
+                    webOutcome.subclassSelection.subclassInstanceSoid,
+                    outcome.subclassSelectionUpdate)) {
+                core::log::write(core::log::Channel::server,
+                                 core::log::Level::warn,
+                                 "ev=subclass_select stage=queuez_preflight result=fail");
+                outcome.subclassSelectionUpdate = {};
+            } else {
+                middleware::web_service::StatusResponse status{};
+                status.value = outcome.subclassSelectionUpdate.after.family4Version;
+                if (!middleware::web_service::encode_response(
+                        message,
+                        middleware::web_service::ResponseShape::statusPair,
+                        status,
+                        output,
+                        written)) {
+                    core::log::write(core::log::Channel::server,
+                                     core::log::Level::warn,
+                                     "ev=subclass_select stage=response result=fail");
+                    return false;
+                }
+                web_service::report_subclass_selection_response(
+                    message, status.value, webOutcome.subclassSelection, output.first(written));
+                outcome.hasSubclassSelection = true;
+                outcome.subclassSelection = webOutcome.subclassSelection;
+            }
+        }
         if (webOutcome.hasSocketPlug) {
             // Opcode 903 completes at the exact Family-4 revision carrying the changed resident
             // item instance. The resident manifest and character placement remain unchanged.
