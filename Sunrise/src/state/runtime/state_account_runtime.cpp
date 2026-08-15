@@ -827,21 +827,26 @@ void report_socket_plug(std::string_view stage,
 /**
  * Applies canonical mutation generations after one shape-only equipment transition.
  *
- * Every surviving instance must preserve its native bucket. A generation advances exactly when
- * its published native row or equipped marker changes, and a second resolution proves that the
- * stamped after-image retained the staged placement.
+ * Every surviving instance must preserve its native bucket. A moved instance receives a fresh
+ * generation except when an equipped item is displaced into the selected inventory position: in
+ * that case it inherits the selected item's prior serial because the native client also uses this
+ * field as display order. A second resolution proves that the stamped after-image retained the
+ * staged placement and, when present, the inherited inventory order.
  */
 [[nodiscard]] bool
 finalize_equipment_transition(const AccountState& account,
                               std::size_t characterIndex,
                               std::uint64_t requestedInstanceSoid,
+                              std::uint64_t displacedInstanceSoid,
                               EquipmentMutationKind kind,
                               std::uint8_t expectedNativeSlot,
                               const family4_loadout::ResolvedLoadout& beforeLoadout,
                               CharacterState& after,
                               std::size_t& movedItemCount) noexcept {
     movedItemCount = 0;
-    if (characterIndex >= account.characterCount || kind == EquipmentMutationKind::none) {
+    if (characterIndex >= account.characterCount || kind == EquipmentMutationKind::none
+        || displacedInstanceSoid == requestedInstanceSoid
+        || (kind != EquipmentMutationKind::equip && displacedInstanceSoid != 0)) {
         return false;
     }
 
@@ -864,6 +869,19 @@ finalize_equipment_transition(const AccountState& account,
             && (beforeRequested.equipped || !afterRequested.equipped))
         || (kind == EquipmentMutationKind::unequip
             && (!beforeRequested.equipped || afterRequested.equipped))) {
+        return false;
+    }
+
+    ResolvedPosition beforeDisplaced{};
+    ResolvedPosition afterDisplaced{};
+    if (displacedInstanceSoid != 0
+        && (!find_resolved_position(beforeLoadout, displacedInstanceSoid, beforeDisplaced)
+            || !find_resolved_position(placedAfter, displacedInstanceSoid, afterDisplaced)
+            || !beforeDisplaced.equipped || afterDisplaced.equipped
+            || beforeDisplaced.equipmentSlot != expectedNativeSlot
+            || afterDisplaced.equipmentSlot != expectedNativeSlot
+            || afterDisplaced.inventoryRow != beforeRequested.inventoryRow
+            || afterRequested.inventoryRow != beforeDisplaced.inventoryRow)) {
         return false;
     }
 
@@ -892,8 +910,15 @@ finalize_equipment_transition(const AccountState& account,
     // The serial is signed on the wire, so it must stay inside the positive int32 range.
     constexpr std::uint32_t kMaximumInventorySerial =
         static_cast<std::uint32_t>((std::numeric_limits<std::int32_t>::max)());
-    if (movedItemCount == 0 || after.nextInventorySerial > kMaximumInventorySerial
-        || movedItemCount > kMaximumInventorySerial - after.nextInventorySerial) {
+    if (movedItemCount == 0
+        || (displacedInstanceSoid != 0 && movedItemCount < 2)
+        || after.nextInventorySerial > kMaximumInventorySerial) {
+        return false;
+    }
+    const std::size_t serialAdvanceCount =
+        movedItemCount - static_cast<std::size_t>(displacedInstanceSoid != 0);
+    if (serialAdvanceCount == 0
+        || serialAdvanceCount > kMaximumInventorySerial - after.nextInventorySerial) {
         return false;
     }
 
@@ -906,7 +931,11 @@ finalize_equipment_transition(const AccountState& account,
             return false;
         }
         if (!same_position(beforePosition, afterPosition)) {
-            item.mutationSerial = static_cast<std::int32_t>(after.nextInventorySerial++);
+            if (item.instanceSoid == displacedInstanceSoid) {
+                item.mutationSerial = beforeRequested.mutationSerial;
+            } else {
+                item.mutationSerial = static_cast<std::int32_t>(after.nextInventorySerial++);
+            }
         }
         return true;
     };
@@ -947,6 +976,15 @@ finalize_equipment_transition(const AccountState& account,
         if (!find_resolved_position(placedAfter, item.instanceSoid, placed)
             || !find_resolved_position(checkedAfter, item.instanceSoid, checked)
             || !same_position(placed, checked) || checked.mutationSerial != item.mutationSerial) {
+            return false;
+        }
+    }
+    if (displacedInstanceSoid != 0) {
+        ResolvedPosition checkedDisplaced{};
+        if (!find_resolved_position(checkedAfter, displacedInstanceSoid, checkedDisplaced)
+            || checkedDisplaced.equipped
+            || checkedDisplaced.equipmentSlot != expectedNativeSlot
+            || checkedDisplaced.mutationSerial != beforeRequested.mutationSerial) {
             return false;
         }
     }
@@ -2121,6 +2159,7 @@ bool prepare_equipment_swap(std::uint64_t requestedInstanceSoid,
     if (!finalize_equipment_transition(account,
                                        characterIndex,
                                        requestedInstanceSoid,
+                                       previousInstanceSoid,
                                        EquipmentMutationKind::equip,
                                        requestedNativeSlot,
                                        beforeLoadout,
@@ -2239,6 +2278,7 @@ bool prepare_equipment_unequip(std::uint64_t requestedInstanceSoid,
     if (!finalize_equipment_transition(account,
                                        characterIndex,
                                        requestedInstanceSoid,
+                                       0,
                                        EquipmentMutationKind::unequip,
                                        requestedNativeSlot,
                                        beforeLoadout,
