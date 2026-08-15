@@ -10,6 +10,10 @@ constexpr std::uint8_t kSlotTypeParticipation = 13;
 constexpr std::uint8_t kSlotTypeLifetime = 17;
 constexpr std::uint8_t kSlotTypeConfiguration = 8;
 constexpr std::uint8_t kSlotTypePackage = 16;
+/** Auth schema `0x80809919`: shared activity record, bool, then signed i32. */
+constexpr std::uint8_t kSlotType18 = 18;
+/** Auth schema `0x808099BF`: two bools, two biased 2-bit values, then the shared record. */
+constexpr std::uint8_t kSlotType35 = 35;
 constexpr std::uint8_t kSlotTypeQueues = 41;
 constexpr std::uint8_t kSlotTypeSpawnKeys = 67;
 
@@ -19,6 +23,8 @@ constexpr std::size_t kParticipationRegionBits = 32;
 constexpr std::size_t kLifetimeBits = 520;
 constexpr std::size_t kConfigurationBits = 35;
 constexpr std::size_t kPackageBits = 7;
+constexpr std::size_t kType18Bits = 386;
+constexpr std::size_t kType35Bits = 359;
 constexpr std::size_t kQueueBits = 12;
 constexpr std::size_t kSpawnKeyBits = 32 * 32 + 1 + 32;
 
@@ -39,6 +45,21 @@ constexpr std::uint8_t kSpawnOverrideIndexWidth = 10;
 constexpr std::uint32_t kSpawnOverrideIndexBias = 1;
 /** Type 67 maps the 32 spawn-key ordinals to themselves, matching its constructor. */
 constexpr std::size_t kSpawnKeyCount = 32;
+
+/**
+ * Writes auth schema `0x808099C4`, shared by slot types 18 and 35.
+ * The native schema has one bool, five unsigned 64-bit values, and one unsigned 32-bit value.
+ * Its constructed state is all zeroes.
+ * @param writer Body writer.
+ * @return True when all 353 bits fit.
+ */
+[[nodiscard]] bool write_common_activity_record(bits::Writer& writer) noexcept {
+    bool encoded = writer.write(0, kPresenceWidth);
+    for (std::size_t field = 0; encoded && field < 5; ++field) {
+        encoded = writer.write(0, 64);
+    }
+    return encoded && writer.write(0, 32);
+}
 
 /**
  * Writes the participation body, which binds the player and latches the region. Zero-fill is not
@@ -133,6 +154,12 @@ auth_body_bits(const Snapshot& snapshot, std::uint8_t slotType, bool carriesPlay
     if (slotType == kSlotTypePackage) {
         return kPackageBits;
     }
+    if (slotType == kSlotType18) {
+        return kType18Bits;
+    }
+    if (slotType == kSlotType35) {
+        return kType35Bits;
+    }
     if (slotType == kSlotTypeQueues) {
         return kQueueBits;
     }
@@ -161,6 +188,15 @@ bool write_auth_body(bits::Writer& writer,
     } else if (slotType == kSlotTypePackage) {
         // 7 absent top-level fields keep the package-owned configuration.
         encoded = pad_bits(writer, kPackageBits);
+    } else if (slotType == kSlotType18) {
+        encoded = write_common_activity_record(writer)
+                  && writer.write(0, kPresenceWidth)
+                  && writer.write(kSignedZero, 32);
+    } else if (slotType == kSlotType35) {
+        // Both 2-bit values are biased by one, so wire value one stores logical zero.
+        encoded = writer.write(0, kPresenceWidth) && writer.write(0, kPresenceWidth)
+                  && writer.write(1, 2) && writer.write(1, 2)
+                  && write_common_activity_record(writer);
     } else if (slotType == kSlotTypeQueues) {
         encoded = writer.write(0, 7) && writer.write(0, 5);
     } else if (slotType == kSlotTypeSpawnKeys) {
