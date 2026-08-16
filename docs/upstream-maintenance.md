@@ -25,12 +25,28 @@ reference for the small Wine/Proton compatibility layer, but it is no longer the
 2. Fetch `upstream` and inspect the new commits.
 3. Treat release tags as stable bases. Review untagged `upstream/master` commits individually; do
    not assume the branch tip is release-ready.
-4. Merge only the selected upstream commits into `main`, preserving official behavior first.
-5. Build the Windows DLL from a clean directory with the official CMake Linux cross-compilation
+4. Create an integration branch whose starting tree is the chosen official upstream commit. If
+   published Playground ancestry must be retained, record it with a history-only merge whose tree
+   remains byte-for-byte identical to that upstream commit.
+5. Replay the small, ordered Playground overlay on top. If upstream now provides the same feature,
+   omit the local implementation. Resolve every genuine overlap in favor of upstream's architecture
+   and behavior, then adapt only the still-missing Playground behavior to the new interfaces.
+6. Review the final upstream-to-Playground diff so generated files, research probes, and duplicate
+   implementations cannot enter `main` accidentally.
+7. Build the Windows DLL from a clean directory with the official CMake Linux cross-compilation
    workflow.
-6. Test the resulting DLL offline before tagging or publishing a Playground release.
-7. Merge the validated `main` into `research/tribute-hall`; do not merge the research branch back
-   into `main` as a shortcut.
+8. Test the resulting DLL offline before advancing `main`, tagging, or publishing a Playground
+   release.
+9. Rebuild `research/tribute-hall` from the validated `main` tree and replay only its research
+   commits. Never merge the research branch back into `main` as a shortcut.
+
+## Upstream-first invariant
+
+The selected official commit is the source of truth, not merely another side of a conventional
+merge. Playground code must remain a removable overlay. A local implementation is deleted as soon
+as upstream supplies an equivalent, even if the local version landed first or has more history.
+Release tags and the `backup/pre-upstream-*` branches preserve old states; they are not reasons to
+carry obsolete implementations into the next build.
 
 ## Cache-format invariant
 
