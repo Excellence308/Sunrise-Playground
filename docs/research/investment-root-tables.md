@@ -796,6 +796,35 @@ the successful cache-35 inline-gap build at SHA-256
 `60b064681df09488aeb5472af797699faced62243eb67f0d984201d8b4a7a25a`. The archive also preserves
 the pre-deployment format-35 cache and settings at their unchanged hashes above.
 
+The live grouped-map run produced a positive structural result. Across three Hall messages, all 14
+framed type-23 records validated exactly and every record returned
+`type23_map_gap_mask=0x0A`. Bits 1 and 3 are therefore the only surviving positions: the opaque bit
+is either between markers zero and one or between markers two and three. Message 1 contributed six
+matches; messages 2 and 3 contributed four each. The complete payload-safe trace is archived as
+`grouped-map-gap-run.log` with SHA-256
+`0283c861d834e5975c3231a0d93bf53a829a5a0799c17c3cb9287539e0cd726d` in the same deployment
+folder. Settings and the format-35 cache remained byte-identical at their hashes above.
+
+Those two type-23 candidates consume the same seven-bit header and differ only in whether two
+equal-width native fields exchange their marker assignment. Another type-23 end-position test
+cannot distinguish them without interpreting field values. The next diagnostic instead uses the
+common extra-bit hypothesis across type 1: its eight grouped markers, three observed body widths,
+and ten possible map/trailer boundaries provide an independent structural mask. It reports only
+`type1_map_gap_mask`; no marker or field value leaves the validator. Intersecting type 1's stable
+positions with type 23's `{1, 3}` can identify the shared record-bit position or reject the shared
+placement hypothesis cleanly.
+
+All ten type-1 positions, all eight type-23 positions, arbitrary non-byte-aligned starts,
+deliberate ambiguity, the 17-bit minimum type-1 truncation boundary, and the unchanged type-4 path
+passed the isolated synthetic suite. The official CMake cross-build then completed from a fresh
+build directory. The candidate is archived under
+`backups/deployments/tribute-hall-sense-cross-schema-gap-20260816/`; the clean-build and archived
+DLL are byte-identical at SHA-256
+`66c0b74762119cd784570cb6a6f27f9342f353f9acb0d23024337a5481962dba`. Its immediate rollback is
+the positive type-23 grouped-map build at SHA-256
+`e003dd458f361472f1efad56586e428d57e94a7f040a976bc8a215d0c4e45902`. The archive preserves the
+pre-deployment format-35 cache and settings at their unchanged hashes above.
+
 The successful Moon control trace is preserved as
 `backups/deployments/tribute-hall-task9-origin-20260816/sunrise-moon-task9-origin.log` with SHA-256
 `b3351bc22a27fede6037e069887e705a94e3aa23f0e71bc960eed8cf229f91db`.

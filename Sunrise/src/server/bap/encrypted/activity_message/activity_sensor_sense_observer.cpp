@@ -184,12 +184,6 @@ roster_for(std::uint32_t key, const RosterGroup& primary, const RosterGroup& amb
     switch (validation) {
     case SenseSchemaValidation::unsupported:
         return "unsupported";
-    case SenseSchemaValidation::exact_record_prefix_map:
-        return "exact_prefix_map";
-    case SenseSchemaValidation::exact_record_trailer_map:
-        return "exact_trailer_map";
-    case SenseSchemaValidation::exact_map_ambiguous:
-        return "exact_ambiguous_map";
     case SenseSchemaValidation::exact_grouped_gap:
         return "exact_grouped_gap";
     case SenseSchemaValidation::exact_grouped_gap_ambiguous:
@@ -210,41 +204,62 @@ void report_record(unsigned ordinal,
                    bool knownVariant,
                    SenseSchemaResult schema) noexcept {
     std::array<char, core::log::kLineCapacity> line{};
-    const int written = match.type == 23 && bodyBits >= 0
-                            ? std::snprintf(
-                                  line.data(),
-                                  line.size(),
-                                  "ev=activity stage=sense_parse result=record ordinal=%u "
-                                  "group=0x%08X key_bit=%zu type=%u index=%u body_bits=%lld "
-                                  "remaining_bits=%zu framing=%s variant=%s schema=%s "
-                                  "type23_map_gap_mask=0x%02X",
-                                  ordinal,
-                                  match.key,
-                                  match.bit,
-                                  static_cast<unsigned>(match.type),
-                                  static_cast<unsigned>(match.index),
-                                  bodyBits,
-                                  remainingBits,
-                                  "next_object",
-                                  knownVariant ? "observed" : "unresolved",
-                                  schema_name(true, schema.validation),
-                                  static_cast<unsigned>(schema.type23GroupedGapMask))
-                            : std::snprintf(
-                                  line.data(),
-                                  line.size(),
-                                  "ev=activity stage=sense_parse result=record ordinal=%u "
-                                  "group=0x%08X key_bit=%zu type=%u index=%u body_bits=%lld "
-                                  "remaining_bits=%zu framing=%s variant=%s schema=%s",
-                                  ordinal,
-                                  match.key,
-                                  match.bit,
-                                  static_cast<unsigned>(match.type),
-                                  static_cast<unsigned>(match.index),
-                                  bodyBits,
-                                  remainingBits,
-                                  bodyBits >= 0 ? "next_object" : "unframed_tail",
-                                  knownVariant ? "observed" : "unresolved",
-                                  schema_name(bodyBits >= 0, schema.validation));
+    int written = 0;
+    if (match.type == 1 && bodyBits >= 0) {
+        written = std::snprintf(
+            line.data(),
+            line.size(),
+            "ev=activity stage=sense_parse result=record ordinal=%u "
+            "group=0x%08X key_bit=%zu type=%u index=%u body_bits=%lld "
+            "remaining_bits=%zu framing=%s variant=%s schema=%s "
+            "type1_map_gap_mask=0x%03X",
+            ordinal,
+            match.key,
+            match.bit,
+            static_cast<unsigned>(match.type),
+            static_cast<unsigned>(match.index),
+            bodyBits,
+            remainingBits,
+            "next_object",
+            knownVariant ? "observed" : "unresolved",
+            schema_name(true, schema.validation),
+            static_cast<unsigned>(schema.type1GroupedGapMask));
+    } else if (match.type == 23 && bodyBits >= 0) {
+        written = std::snprintf(
+            line.data(),
+            line.size(),
+            "ev=activity stage=sense_parse result=record ordinal=%u "
+            "group=0x%08X key_bit=%zu type=%u index=%u body_bits=%lld "
+            "remaining_bits=%zu framing=%s variant=%s schema=%s "
+            "type23_map_gap_mask=0x%02X",
+            ordinal,
+            match.key,
+            match.bit,
+            static_cast<unsigned>(match.type),
+            static_cast<unsigned>(match.index),
+            bodyBits,
+            remainingBits,
+            "next_object",
+            knownVariant ? "observed" : "unresolved",
+            schema_name(true, schema.validation),
+            static_cast<unsigned>(schema.type23GroupedGapMask));
+    } else {
+        written = std::snprintf(line.data(),
+                                line.size(),
+                                "ev=activity stage=sense_parse result=record ordinal=%u "
+                                "group=0x%08X key_bit=%zu type=%u index=%u body_bits=%lld "
+                                "remaining_bits=%zu framing=%s variant=%s schema=%s",
+                                ordinal,
+                                match.key,
+                                match.bit,
+                                static_cast<unsigned>(match.type),
+                                static_cast<unsigned>(match.index),
+                                bodyBits,
+                                remainingBits,
+                                bodyBits >= 0 ? "next_object" : "unframed_tail",
+                                knownVariant ? "observed" : "unresolved",
+                                schema_name(bodyBits >= 0, schema.validation));
+    }
     if (written > 0) {
         core::log::write(core::log::Channel::server,
                          core::log::Level::info,
@@ -401,9 +416,6 @@ void observe_sensor_sense_structure(std::span<const std::byte> payload) noexcept
                     ++summary.observedVariants;
                 }
                 switch (schema.validation) {
-                case SenseSchemaValidation::exact_record_prefix_map:
-                case SenseSchemaValidation::exact_record_trailer_map:
-                case SenseSchemaValidation::exact_map_ambiguous:
                 case SenseSchemaValidation::exact_grouped_gap:
                 case SenseSchemaValidation::exact_grouped_gap_ambiguous:
                     ++summary.schemaExact;
