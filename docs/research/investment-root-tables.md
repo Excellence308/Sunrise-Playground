@@ -766,6 +766,36 @@ failed format-34 DLL and the last known-working pre-migration DLL. Deployment di
 or the old cache; their hashes remain the values above so the next launch itself will exercise the
 versioned rebuild path.
 
+That launch completed initialization in 378 ms and rebuilt the stale cache as format 35. The
+resulting cache is archived as `build_data-format35-after.bin` with SHA-256
+`8547197d6cedbff30cc9c0e6700be3dada03630d344f046f032bc709a99489b9`; post-run settings remained
+byte-identical at SHA-256
+`746ca57fdaa3882b5a79e52eb846091485c22af80be9e01b27c775618af6ba10`. Six Hall messages supplied
+28 framed type-23 records, and every record returned `type23_gap_mask=0x00`. This rejects all seven
+placements of one opaque bit around the recovered six inline optional fields. The complete
+payload-safe trace is archived as `type23-inline-gap-run.log` with SHA-256
+`0bbdbf13b0c09478b22f4b04bb6baf3f7cf534e1e392cb202d58cf8c51b270e2` in the same deployment
+folder.
+
+The next bounded hypothesis retains the recovered field count and widths but groups the six
+markers before their present 32-bit values. It tests eight placements for the unexplained bit:
+before the first marker, at each of the five inter-marker boundaries, between the marker map and
+values, and after the values. Each framed type-23 record reports only an eight-bit structural-match
+mask named `type23_map_gap_mask`; marker bits, field values, and payload bytes remain borrowed and
+are never logged, copied, hashed, or retained. Type 1 and the deliberately partial type-4 path are
+unchanged.
+
+All eight grouped-map gap positions, arbitrary non-byte-aligned starts, truncation rejection,
+deliberate ambiguity, and the unchanged type-1/type-4 paths passed the isolated synthetic suite.
+The official CMake cross-build then completed from a fresh build directory. The candidate is
+archived under
+`backups/deployments/tribute-hall-sense-type23-grouped-map-gap-20260816/`; the clean-build and
+archived DLL are byte-identical at SHA-256
+`e003dd458f361472f1efad56586e428d57e94a7f040a976bc8a215d0c4e45902`. Its immediate rollback is
+the successful cache-35 inline-gap build at SHA-256
+`60b064681df09488aeb5472af797699faced62243eb67f0d984201d8b4a7a25a`. The archive also preserves
+the pre-deployment format-35 cache and settings at their unchanged hashes above.
+
 The successful Moon control trace is preserved as
 `backups/deployments/tribute-hall-task9-origin-20260816/sunrise-moon-task9-origin.log` with SHA-256
 `b3351bc22a27fede6037e069887e705a94e3aa23f0e71bc960eed8cf229f91db`.
