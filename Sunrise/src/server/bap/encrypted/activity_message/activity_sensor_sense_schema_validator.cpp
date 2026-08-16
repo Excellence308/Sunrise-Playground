@@ -57,31 +57,21 @@ class Cursor final {
     bool valid_{};
 };
 
-[[nodiscard]] SenseSchemaValidation layout_result(bool prefix, bool trailer) noexcept {
-    if (prefix && trailer) {
-        return SenseSchemaValidation::exact_map_ambiguous;
-    }
-    if (prefix) {
-        return SenseSchemaValidation::exact_record_prefix_map;
-    }
-    if (trailer) {
-        return SenseSchemaValidation::exact_record_trailer_map;
-    }
-    return SenseSchemaValidation::mismatch;
-}
-
-/** Walks schema 0x80807ECC with its eight optional markers grouped ahead of field values. */
-[[nodiscard]] bool parse_type_1_map(Cursor cursor, bool recordPrefix) noexcept {
+/** Walks schema 0x80807ECC as a grouped marker map with one selected opaque-bit position. */
+[[nodiscard]] bool parse_type_1_grouped_gap(Cursor cursor, std::size_t gap) noexcept {
     constexpr std::array<std::size_t, 6> kOptionalScalarWidths{31, 31, 31, 6, 7, 31};
     std::array<bool, 8> present{};
 
-    if (recordPrefix && !cursor.skip(1)) {
-        return false;
-    }
-    for (bool& fieldPresent : present) {
-        if (!cursor.presence(fieldPresent)) {
+    for (std::size_t field = 0; field < present.size(); ++field) {
+        if (gap == field && !cursor.skip(1)) {
             return false;
         }
+        if (!cursor.presence(present[field])) {
+            return false;
+        }
+    }
+    if (gap == present.size() && !cursor.skip(1)) {
+        return false;
     }
     for (std::size_t field = 0; field < kOptionalScalarWidths.size(); ++field) {
         if (present[field] && !cursor.skip(kOptionalScalarWidths[field])) {
@@ -101,12 +91,29 @@ class Cursor final {
             return false;
         }
     }
-    return (recordPrefix || cursor.skip(1)) && cursor.at_end();
+    if (gap == present.size() + 1 && !cursor.skip(1)) {
+        return false;
+    }
+    return cursor.at_end();
 }
 
-/** Tests both bounded placements of the common record bit around the type-1 presence map. */
-[[nodiscard]] SenseSchemaValidation validate_type_1(const Cursor& cursor) noexcept {
-    return layout_result(parse_type_1_map(cursor, true), parse_type_1_map(cursor, false));
+/** Reports only which of ten grouped-map boundaries close at the exact body end. */
+[[nodiscard]] SenseSchemaResult validate_type_1(const Cursor& cursor) noexcept {
+    SenseSchemaResult result{SenseSchemaValidation::mismatch, 0, 0};
+    for (std::size_t gap = 0; gap <= 9; ++gap) {
+        if (parse_type_1_grouped_gap(cursor, gap)) {
+            result.type1GroupedGapMask |= static_cast<std::uint16_t>(1U << gap);
+        }
+    }
+    if (result.type1GroupedGapMask == 0) {
+        return result;
+    }
+    const std::uint16_t withoutLowest = static_cast<std::uint16_t>(
+        result.type1GroupedGapMask
+        & static_cast<std::uint16_t>(result.type1GroupedGapMask - 1U));
+    result.validation = withoutLowest == 0 ? SenseSchemaValidation::exact_grouped_gap
+                                          : SenseSchemaValidation::exact_grouped_gap_ambiguous;
+    return result;
 }
 
 /** Walks schema 0x80804F47 as a grouped marker map with one selected opaque-bit position. */
@@ -137,7 +144,7 @@ class Cursor final {
 
 /** Reports only which of eight grouped-map boundaries close at the exact body end. */
 [[nodiscard]] SenseSchemaResult validate_type_23(const Cursor& cursor) noexcept {
-    SenseSchemaResult result{SenseSchemaValidation::mismatch, 0};
+    SenseSchemaResult result{SenseSchemaValidation::mismatch, 0, 0};
     for (std::size_t gap = 0; gap <= 7; ++gap) {
         if (parse_type_23_grouped_gap(cursor, gap)) {
             result.type23GroupedGapMask |= static_cast<std::uint8_t>(1U << gap);
@@ -171,13 +178,13 @@ SenseSchemaResult validate_sensor_sense_body(std::span<const std::byte> payload,
     Cursor cursor(payload, startBit, bodyBits);
     switch (slotType) {
     case 1:
-        return {validate_type_1(cursor), 0};
+        return validate_type_1(cursor);
     case 4:
-        return {validate_type_4(cursor), 0};
+        return {validate_type_4(cursor), 0, 0};
     case 23:
         return validate_type_23(cursor);
     default:
-        return {SenseSchemaValidation::unsupported, 0};
+        return {SenseSchemaValidation::unsupported, 0, 0};
     }
 }
 
