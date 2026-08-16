@@ -243,3 +243,66 @@ repository policy and the final diff manually.
 
 The candidate, immediate rollback, unchanged runtime state, and exact sources are preserved under
 `backups/deployments/tribute-hall-sobject-correlated-20260817-000127/`.
+
+## Live correlated result and handle-pool semantics
+
+The corrected same-thread probe classified every exact Hall failure without a correlation miss.
+The Hall emitted 112 `sobject` errors in two batches. All 112 traces had `create_arg=0`,
+`create_mode=-1`, `sim=0xFFFFFFFF`, and stopped at `handle_pool`; commit, record allocation, and
+registration were never reached. Their encoded source handles carried consecutive low 13-bit
+indices `1` through `0x70`, identifying one 112-object Hall batch rather than the unrelated
+`player_broadcast` retry.
+
+| Correlated result | Count or range |
+| --- | --- |
+| Exact `sobject` retail errors | 112 |
+| Same-thread classified failures | 112 |
+| Correlation misses | 0 |
+| Failure reason | 112 `handle_pool` |
+| Source-handle indices | `1` through `0x70` |
+
+The allocator at RVA `0x1711D10` delegates availability lookup to the helper at RVA `0x35EE10`.
+The helper scans 256 32-bit words, representing exactly `0x2000` handle slots, at manager offset
+`0xC118`. It returns the first set-bit index or `-1` when every word contains zero. The allocator
+then clears the selected bit before constructing the handle. Therefore `handle_pool` is now proven
+to mean that the native free-handle bitmap exposed no available bit; it is not a generic entity
+validation rejection.
+
+This still leaves two mechanically distinct states: the free bitmap was never initialized, or all
+8,192 slots were genuinely consumed. The correctly addressed 1 KiB helper snapshot was copied
+read-only from the decrypted live image. No debugger was attached, no thread was suspended, and no
+process memory was written. The run and helper are preserved under
+`backups/deployments/tribute-hall-sobject-handle-pool-20260817-001340/`; the helper snapshot SHA-256
+is `f87ca18cce1f3b103c16731b4ad4e5408325a89facb78642ee816470eabd74d1`.
+
+### One-shot pool-state diagnostic
+
+The next fork-local probe records the allocator manager on the failed nested call and reads the
+following fields once, only after the exact retail line identifies the entity as `sobject`:
+
+| Logged field | Native evidence it reports |
+| --- | --- |
+| `free_bits` | Number of set bits across the 8,192-slot free bitmap |
+| `free_words` | Number of the 256 bitmap words containing at least one free bit |
+| `generation_nonzero` | Slots whose generation byte at `0x118 + 6 * slot` has ever been initialized |
+| `mapping_minus_one` | Slots retaining the native `-1` unbound mapping sentinel at `0x114 + 6 * slot` |
+| `mapping_other` | Slots whose mapping field is not the unbound sentinel |
+| `owner_readable`, `owner`, `owner_epoch`, `failure_sink` | Whether the manager owner structure and failure callback state exist |
+
+All reads are guarded and observational. The diagnostic does not set bitmap bits, manufacture a
+handle, invoke initialization, enlarge a table, or change an original return value.
+
+### Pool-state diagnostic candidate
+
+The official CMake cross-build completed successfully. The repository still configures no test
+targets.
+
+| Pool-state artifact | SHA-256 |
+| --- | --- |
+| candidate DLL | `37fad2f58e6b352fed9246360612ab16de84de4a1e28e2f158ee2ccd1148209f` |
+| immediate correlated-DLL rollback | `142cb1762dd9c8a8bb0db7b6d5035c5c6bf50c42765a553bc2a0429e805be506` |
+| unchanged build-data cache | `562d6d9974bc05b35ff3883d4fb30a369e7c7e654f052b15fd78fbe725470a95` |
+| unchanged settings | `2a679c1e94ceba991dd6c51b747a83d1c4bd23bf835eadec783098f1ddaf7b7c` |
+
+The candidate, immediate rollback, unchanged runtime state, and exact source are preserved under
+`backups/deployments/tribute-hall-handle-pool-state-20260817-001814/`.
