@@ -12,8 +12,8 @@ enum class SenseSchemaValidation : std::uint8_t {
     exact_record_prefix_map,
     exact_record_trailer_map,
     exact_map_ambiguous,
-    exact_inline_gap,
-    exact_inline_gap_ambiguous,
+    exact_grouped_gap,
+    exact_grouped_gap_ambiguous,
     partial_dynamic,
     mismatch,
 };
@@ -21,17 +21,17 @@ enum class SenseSchemaValidation : std::uint8_t {
 /** Payload-free result for one bounded native-schema walk. */
 struct SenseSchemaResult final {
     SenseSchemaValidation validation{SenseSchemaValidation::unsupported};
-    /** Bit N means the type-23 shape closed exactly with the opaque bit at gap N. */
-    std::uint8_t type23GapMask{};
+    /** Bit N means the type-23 grouped-map shape closed with the opaque bit at gap N. */
+    std::uint8_t type23GroupedGapMask{};
 };
 
 /**
  * Validates one already-framed sensor-sense body against the recovered native schema shape.
  * The payload remains borrowed and no payload bits, values, hashes or copies are retained.
  * Type 1 tests the two bounded placements of an opaque record bit around a grouped optional-field
- * presence map. Type 23 tests all seven positions for that bit around six inline optional fields
- * and returns only the structural match mask. Type 4 remains partial while its kind-0x22 branch
- * is unresolved.
+ * presence map. Type 23 tests eight positions for that bit within and around a grouped six-marker
+ * map, then advances over only the marked 32-bit values. It returns only the structural match
+ * mask. Type 4 remains partial while its kind-0x22 branch is unresolved.
  */
 [[nodiscard]] SenseSchemaResult
 validate_sensor_sense_body(std::span<const std::byte> payload,

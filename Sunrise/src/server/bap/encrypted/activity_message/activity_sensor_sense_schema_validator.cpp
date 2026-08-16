@@ -109,39 +109,48 @@ class Cursor final {
     return layout_result(parse_type_1_map(cursor, true), parse_type_1_map(cursor, false));
 }
 
-/** Walks schema 0x80804F47 inline, inserting one opaque bit at the selected field boundary. */
-[[nodiscard]] bool parse_type_23_inline_gap(Cursor cursor, std::size_t gap) noexcept {
+/** Walks schema 0x80804F47 as a grouped marker map with one selected opaque-bit position. */
+[[nodiscard]] bool parse_type_23_grouped_gap(Cursor cursor, std::size_t gap) noexcept {
     constexpr std::size_t kFieldCount = 6;
+    std::array<bool, kFieldCount> present{};
     for (std::size_t field = 0; field < kFieldCount; ++field) {
         if (gap == field && !cursor.skip(1)) {
             return false;
         }
-        bool present = false;
-        if (!cursor.presence(present) || (present && !cursor.skip(32))) {
+        if (!cursor.presence(present[field])) {
             return false;
         }
     }
     if (gap == kFieldCount && !cursor.skip(1)) {
         return false;
     }
+    for (const bool fieldPresent : present) {
+        if (fieldPresent && !cursor.skip(32)) {
+            return false;
+        }
+    }
+    if (gap == kFieldCount + 1 && !cursor.skip(1)) {
+        return false;
+    }
     return cursor.at_end();
 }
 
-/** Reports only which of the seven inline field boundaries close at the exact body end. */
+/** Reports only which of eight grouped-map boundaries close at the exact body end. */
 [[nodiscard]] SenseSchemaResult validate_type_23(const Cursor& cursor) noexcept {
     SenseSchemaResult result{SenseSchemaValidation::mismatch, 0};
-    for (std::size_t gap = 0; gap <= 6; ++gap) {
-        if (parse_type_23_inline_gap(cursor, gap)) {
-            result.type23GapMask |= static_cast<std::uint8_t>(1U << gap);
+    for (std::size_t gap = 0; gap <= 7; ++gap) {
+        if (parse_type_23_grouped_gap(cursor, gap)) {
+            result.type23GroupedGapMask |= static_cast<std::uint8_t>(1U << gap);
         }
     }
-    if (result.type23GapMask == 0) {
+    if (result.type23GroupedGapMask == 0) {
         return result;
     }
     const std::uint8_t withoutLowest = static_cast<std::uint8_t>(
-        result.type23GapMask & static_cast<std::uint8_t>(result.type23GapMask - 1U));
-    result.validation = withoutLowest == 0 ? SenseSchemaValidation::exact_inline_gap
-                                          : SenseSchemaValidation::exact_inline_gap_ambiguous;
+        result.type23GroupedGapMask
+        & static_cast<std::uint8_t>(result.type23GroupedGapMask - 1U));
+    result.validation = withoutLowest == 0 ? SenseSchemaValidation::exact_grouped_gap
+                                          : SenseSchemaValidation::exact_grouped_gap_ambiguous;
     return result;
 }
 

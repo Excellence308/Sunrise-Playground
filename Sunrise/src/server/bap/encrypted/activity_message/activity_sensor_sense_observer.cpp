@@ -190,10 +190,10 @@ roster_for(std::uint32_t key, const RosterGroup& primary, const RosterGroup& amb
         return "exact_trailer_map";
     case SenseSchemaValidation::exact_map_ambiguous:
         return "exact_ambiguous_map";
-    case SenseSchemaValidation::exact_inline_gap:
-        return "exact_inline_gap";
-    case SenseSchemaValidation::exact_inline_gap_ambiguous:
-        return "exact_ambiguous_inline_gap";
+    case SenseSchemaValidation::exact_grouped_gap:
+        return "exact_grouped_gap";
+    case SenseSchemaValidation::exact_grouped_gap_ambiguous:
+        return "exact_ambiguous_grouped_gap";
     case SenseSchemaValidation::partial_dynamic:
         return "partial_kind22";
     case SenseSchemaValidation::mismatch:
@@ -217,7 +217,7 @@ void report_record(unsigned ordinal,
                                   "ev=activity stage=sense_parse result=record ordinal=%u "
                                   "group=0x%08X key_bit=%zu type=%u index=%u body_bits=%lld "
                                   "remaining_bits=%zu framing=%s variant=%s schema=%s "
-                                  "type23_gap_mask=0x%02X",
+                                  "type23_map_gap_mask=0x%02X",
                                   ordinal,
                                   match.key,
                                   match.bit,
@@ -228,7 +228,7 @@ void report_record(unsigned ordinal,
                                   "next_object",
                                   knownVariant ? "observed" : "unresolved",
                                   schema_name(true, schema.validation),
-                                  static_cast<unsigned>(schema.type23GapMask))
+                                  static_cast<unsigned>(schema.type23GroupedGapMask))
                             : std::snprintf(
                                   line.data(),
                                   line.size(),
@@ -404,8 +404,8 @@ void observe_sensor_sense_structure(std::span<const std::byte> payload) noexcept
                 case SenseSchemaValidation::exact_record_prefix_map:
                 case SenseSchemaValidation::exact_record_trailer_map:
                 case SenseSchemaValidation::exact_map_ambiguous:
-                case SenseSchemaValidation::exact_inline_gap:
-                case SenseSchemaValidation::exact_inline_gap_ambiguous:
+                case SenseSchemaValidation::exact_grouped_gap:
+                case SenseSchemaValidation::exact_grouped_gap_ambiguous:
                     ++summary.schemaExact;
                     break;
                 case SenseSchemaValidation::partial_dynamic:
