@@ -6,6 +6,27 @@ namespace {
 /** The widest slice-set index the region space allows. */
 constexpr std::uint32_t kSliceSetIndexBound = 512;
 
+/** Tests one object's slots against one bounded list. */
+[[nodiscard]] bool carries_any_roster_slot(std::span<const std::byte> object,
+                                           std::span<const std::uint16_t> wanted) noexcept {
+    Array slots{};
+    if (!object_slots(object, slots)) {
+        return false;
+    }
+    for (std::uint64_t index = 0; index < slots.count; ++index) {
+        Slot slot{};
+        if (!object_slot_at(object, slots, index, slot)) {
+            return false;
+        }
+        for (const std::uint16_t type : wanted) {
+            if (slot.type == type) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 /**
  * Turns a slice-set index into its bit position.
  * @param sliceSetIndex Index as the entry reports it, already scaled by the factor.
@@ -29,22 +50,12 @@ constexpr std::uint32_t kSliceSetIndexBound = 512;
  * @return True when it declares a slot of one of the wire types.
  */
 bool carries_roster_slot(std::span<const std::byte> object) noexcept {
-    Array slots{};
-    if (!object_slots(object, slots)) {
-        return false;
-    }
-    for (std::uint64_t index = 0; index < slots.count; ++index) {
-        Slot slot{};
-        if (!object_slot_at(object, slots, index, slot)) {
-            return false;
-        }
-        for (const std::uint16_t wanted : kRosterSlotTypes) {
-            if (slot.type == wanted) {
-                return true;
-            }
-        }
-    }
-    return false;
+    return carries_any_roster_slot(object, kBaselineRosterSlotTypes);
+}
+
+/** Tests the explicit supplemental slot list. */
+bool carries_supplemental_roster_slot(std::span<const std::byte> object) noexcept {
+    return carries_any_roster_slot(object, kSupplementalRosterSlotTypes);
 }
 
 /**

@@ -56,8 +56,24 @@ void observe_unresolved_slice_set(RosterIntersection& state) noexcept;
  * Only 56 installed objects declare any of them, and the key limit above holds only for that
  * filtered set. Feeding every placed object instead overflows most destinations.
  */
-inline constexpr std::array<std::uint16_t, 9> kRosterSlotTypes = {
+inline constexpr std::array<std::uint16_t, 9> kBaselineRosterSlotTypes = {
     8, 13, 16, 17, 21, 35, 37, 41, 67};
+/**
+ * Package-owned state used by the ambient Trophy Hall object. These make the object discoverable;
+ * publication still requires an explicit destination/key allowance.
+ */
+inline constexpr std::array<std::uint16_t, 6> kSupplementalRosterSlotTypes = {
+    1, 2, 4, 5, 23, 70};
+
+/** @param slotType Placed-object slot type. @return True for the original roster filter. */
+[[nodiscard]] constexpr bool is_baseline_roster_slot(std::uint16_t slotType) noexcept {
+    for (const std::uint16_t wanted : kBaselineRosterSlotTypes) {
+        if (slotType == wanted) {
+            return true;
+        }
+    }
+    return false;
+}
 
 /**
  * Tests whether one placed object is a roster candidate.
@@ -65,6 +81,14 @@ inline constexpr std::array<std::uint16_t, 9> kRosterSlotTypes = {
  * @return True when it declares a slot of one of the wire types.
  */
 [[nodiscard]] bool carries_roster_slot(std::span<const std::byte> object) noexcept;
+
+/**
+ * Tests the additional package-owned slot types seen on the captured ambient Trophy Hall object.
+ * Callers must separately restrict which object and destination may use this broader filter.
+ * @param object Whole placed-object bytes.
+ * @return True when it declares one of the supplemental slot types.
+ */
+[[nodiscard]] bool carries_supplemental_roster_slot(std::span<const std::byte> object) noexcept;
 
 /**
  * Records a slice set the destination reaches, whether or not it holds a roster object.
