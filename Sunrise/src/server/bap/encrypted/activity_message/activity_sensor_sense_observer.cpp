@@ -190,6 +190,10 @@ roster_for(std::uint32_t key, const RosterGroup& primary, const RosterGroup& amb
         return "exact_trailer_map";
     case SenseSchemaValidation::exact_map_ambiguous:
         return "exact_ambiguous_map";
+    case SenseSchemaValidation::exact_inline_gap:
+        return "exact_inline_gap";
+    case SenseSchemaValidation::exact_inline_gap_ambiguous:
+        return "exact_ambiguous_inline_gap";
     case SenseSchemaValidation::partial_dynamic:
         return "partial_kind22";
     case SenseSchemaValidation::mismatch:
@@ -204,23 +208,43 @@ void report_record(unsigned ordinal,
                    long long bodyBits,
                    std::size_t remainingBits,
                    bool knownVariant,
-                   SenseSchemaValidation validation) noexcept {
+                   SenseSchemaResult schema) noexcept {
     std::array<char, core::log::kLineCapacity> line{};
-    const int written = std::snprintf(line.data(),
-                                      line.size(),
-                                      "ev=activity stage=sense_parse result=record ordinal=%u "
-                                      "group=0x%08X key_bit=%zu type=%u index=%u body_bits=%lld "
-                                      "remaining_bits=%zu framing=%s variant=%s schema=%s",
-                                      ordinal,
-                                      match.key,
-                                      match.bit,
-                                      static_cast<unsigned>(match.type),
-                                      static_cast<unsigned>(match.index),
-                                      bodyBits,
-                                      remainingBits,
-                                      bodyBits >= 0 ? "next_object" : "unframed_tail",
-                                      knownVariant ? "observed" : "unresolved",
-                                      schema_name(bodyBits >= 0, validation));
+    const int written = match.type == 23 && bodyBits >= 0
+                            ? std::snprintf(
+                                  line.data(),
+                                  line.size(),
+                                  "ev=activity stage=sense_parse result=record ordinal=%u "
+                                  "group=0x%08X key_bit=%zu type=%u index=%u body_bits=%lld "
+                                  "remaining_bits=%zu framing=%s variant=%s schema=%s "
+                                  "type23_gap_mask=0x%02X",
+                                  ordinal,
+                                  match.key,
+                                  match.bit,
+                                  static_cast<unsigned>(match.type),
+                                  static_cast<unsigned>(match.index),
+                                  bodyBits,
+                                  remainingBits,
+                                  "next_object",
+                                  knownVariant ? "observed" : "unresolved",
+                                  schema_name(true, schema.validation),
+                                  static_cast<unsigned>(schema.type23GapMask))
+                            : std::snprintf(
+                                  line.data(),
+                                  line.size(),
+                                  "ev=activity stage=sense_parse result=record ordinal=%u "
+                                  "group=0x%08X key_bit=%zu type=%u index=%u body_bits=%lld "
+                                  "remaining_bits=%zu framing=%s variant=%s schema=%s",
+                                  ordinal,
+                                  match.key,
+                                  match.bit,
+                                  static_cast<unsigned>(match.type),
+                                  static_cast<unsigned>(match.index),
+                                  bodyBits,
+                                  remainingBits,
+                                  bodyBits >= 0 ? "next_object" : "unframed_tail",
+                                  knownVariant ? "observed" : "unresolved",
+                                  schema_name(bodyBits >= 0, schema.validation));
     if (written > 0) {
         core::log::write(core::log::Channel::server,
                          core::log::Level::info,
@@ -361,7 +385,7 @@ void observe_sensor_sense_structure(std::span<const std::byte> payload) noexcept
         const std::size_t remainingBits = bodyBit <= payloadBits ? payloadBits - bodyBit : 0;
         long long bodyBits = -1;
         bool knownVariant = false;
-        SenseSchemaValidation validation = SenseSchemaValidation::unsupported;
+        SenseSchemaResult schema{};
         const bool hasNextObject = row + 1 < summary.storedKeys && matches[row + 1].object
                                    && matches[row + 1].key == match.key
                                    && matches[row + 1].bit > bodyBit;
@@ -371,15 +395,17 @@ void observe_sensor_sense_structure(std::span<const std::byte> payload) noexcept
                 const std::size_t framed = gap - kObjectContinuationWidth;
                 bodyBits = static_cast<long long>(framed);
                 knownVariant = observed_variant(match.type, framed);
-                validation = validate_sensor_sense_body(payload, bodyBit, framed, match.type);
+                schema = validate_sensor_sense_body(payload, bodyBit, framed, match.type);
                 ++summary.framedObjects;
                 if (knownVariant) {
                     ++summary.observedVariants;
                 }
-                switch (validation) {
+                switch (schema.validation) {
                 case SenseSchemaValidation::exact_record_prefix_map:
                 case SenseSchemaValidation::exact_record_trailer_map:
                 case SenseSchemaValidation::exact_map_ambiguous:
+                case SenseSchemaValidation::exact_inline_gap:
+                case SenseSchemaValidation::exact_inline_gap_ambiguous:
                     ++summary.schemaExact;
                     break;
                 case SenseSchemaValidation::partial_dynamic:
@@ -394,7 +420,7 @@ void observe_sensor_sense_structure(std::span<const std::byte> payload) noexcept
                 }
             }
         }
-        report_record(ordinal, match, bodyBits, remainingBits, knownVariant, validation);
+        report_record(ordinal, match, bodyBits, remainingBits, knownVariant, schema);
     }
 
     report_summary(ordinal, payload.size(), summary);
