@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstddef>
+#include <string_view>
 
 #include "../../hooking/detour.h"
 
@@ -28,5 +29,8 @@ extern std::array<hooking::detour::Handle, kHookCount> g_handles;
 [[nodiscard]] void* commit_entry_point() noexcept;
 [[nodiscard]] void* allocate_record_entry_point() noexcept;
 [[nodiscard]] void* set_registration_mode_entry_point() noexcept;
+
+/** Emits the failed create most recently completed on this thread for a named native entity. */
+void report_pending_failure(std::string_view entityName) noexcept;
 
 } // namespace sunrise::client::hooks::entity_spawn

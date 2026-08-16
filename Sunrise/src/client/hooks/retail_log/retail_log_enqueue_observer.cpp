@@ -12,6 +12,7 @@
 
 #include "../../../core/logging/log.h"
 #include "../../targets/game.h"
+#include "../entity_spawn/entity_spawn_observer.h"
 
 namespace sunrise::client::hooks::retail_log {
 namespace {
@@ -196,6 +197,9 @@ __declspec(noinline) void __fastcall enqueue_body(std::int32_t siteId, const cha
     if (outer) {
         if (siteId != kUnregisteredSite && text != nullptr) {
             capture_line(siteId, text);
+            if (matches_line(text, kSobjectFailure)) {
+                sunrise::client::hooks::entity_spawn::report_pending_failure("sobject");
+            }
             capture_origin(siteId,
                            text,
                            caller,

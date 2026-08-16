@@ -25,7 +25,7 @@ using Commit = bool(__fastcall*)(void*,
 using AllocateRecord = void*(__fastcall*)(void*, std::int32_t) noexcept;
 using SetRegistrationMode = bool(__fastcall*)(void*, std::int32_t) noexcept;
 
-/** Initial load emits about 112 failures; this retains two complete passes without unbounded logs. */
+/** Initial Hall load emits about 138 sobject failures; retain two passes without unbounded logs. */
 constexpr std::uint32_t kFailureLimit = 256;
 constexpr std::size_t kLineCapacity = 320;
 
@@ -45,8 +45,15 @@ struct TraceContext {
     bool registrationSucceeded{};
 };
 
+struct PendingFailure {
+    bool available{};
+    TraceContext trace{};
+};
+
 thread_local TraceContext g_trace;
+thread_local PendingFailure g_pendingFailure;
 std::atomic_uint32_t g_failureCount{};
+std::atomic_bool g_correlationMissReported{};
 
 /** @param slot Stable diagnostic slot. @return Its installed trampoline, or null. */
 template <typename Function>
@@ -67,49 +74,52 @@ template <typename Function>
 }
 
 /** @return The narrowest native stage proven by the nested observer results. */
-[[nodiscard]] std::string_view failure_reason() noexcept {
-    if (!g_trace.allocateHandleCalled || !g_trace.allocateHandleSucceeded) {
+[[nodiscard]] std::string_view failure_reason(const TraceContext& trace) noexcept {
+    if (!trace.allocateHandleCalled || !trace.allocateHandleSucceeded) {
         return "handle_pool";
     }
-    if (!g_trace.commitCalled) {
+    if (!trace.commitCalled) {
         return "commit_not_reached";
     }
-    if (!g_trace.allocateRecordCalled || !g_trace.allocateRecordSucceeded) {
+    if (!trace.allocateRecordCalled || !trace.allocateRecordSucceeded) {
         return "record_pool";
     }
-    if (!g_trace.registrationCalled) {
+    if (!trace.registrationCalled) {
         return "buffer_setup";
     }
-    if (!g_trace.registrationSucceeded) {
+    if (!trace.registrationSucceeded) {
         return "registration";
     }
-    if (!g_trace.commitSucceeded) {
+    if (!trace.commitSucceeded) {
         return "commit_unknown";
     }
     return "create_unknown";
 }
 
-/** Emits one bounded failure event after the original top-level routine has returned. */
-void report_failure() noexcept {
+/** Emits one bounded failure event after the native retail line identifies its entity type. */
+void report_failure(const TraceContext& trace, std::string_view entityName) noexcept {
     if (g_failureCount.fetch_add(1, std::memory_order_relaxed) >= kFailureLimit) {
         return;
     }
-    const std::string_view reason = failure_reason();
+    const std::string_view reason = failure_reason(trace);
     std::array<char, kLineCapacity> line{};
     const int written = std::snprintf(line.data(),
                                       line.size(),
-                                      "ev=sobject_trace stage=create result=fail reason=%.*s "
+                                      "ev=sobject_trace stage=create entity=%.*s result=fail "
+                                      "reason=%.*s "
                                       "source=0x%08X create_arg=%d create_mode=%d sim=0x%08X "
                                       "commit=%u record=%u registration=%u",
+                                      static_cast<int>(entityName.size()),
+                                      entityName.data(),
                                       static_cast<int>(reason.size()),
                                       reason.data(),
-                                      static_cast<std::uint32_t>(g_trace.sourceHandle),
-                                      g_trace.createArgument,
-                                      g_trace.createMode,
-                                      static_cast<std::uint32_t>(g_trace.simulationHandle),
-                                      g_trace.commitCalled ? 1U : 0U,
-                                      g_trace.allocateRecordSucceeded ? 1U : 0U,
-                                      g_trace.registrationSucceeded ? 1U : 0U);
+                                      static_cast<std::uint32_t>(trace.sourceHandle),
+                                      trace.createArgument,
+                                      trace.createMode,
+                                      static_cast<std::uint32_t>(trace.simulationHandle),
+                                      trace.commitCalled ? 1U : 0U,
+                                      trace.allocateRecordSucceeded ? 1U : 0U,
+                                      trace.registrationSucceeded ? 1U : 0U);
     if (written <= 0) {
         return;
     }
@@ -130,13 +140,14 @@ __declspec(noinline) std::int32_t* __fastcall create_body(void* manager,
     const bool outer = g_trace.depth++ == 0;
     if (outer) {
         g_trace = TraceContext{1, sourceHandle, createArgument, createMode};
+        g_pendingFailure = {};
     }
     const auto call = original<Create>(Slot::create);
     std::int32_t* const result =
         call != nullptr ? call(manager, output, createArgument, sourceHandle, createMode) : output;
     if (outer) {
         if (read_output(result != nullptr ? result : output) == -1) {
-            report_failure();
+            g_pendingFailure = PendingFailure{true, g_trace};
         }
         g_trace = {};
     } else {
@@ -209,6 +220,20 @@ __declspec(noinline) bool __fastcall set_registration_mode_body(void* record,
 }
 
 } // namespace
+
+void report_pending_failure(std::string_view entityName) noexcept {
+    if (!g_pendingFailure.available) {
+        if (!g_correlationMissReported.exchange(true, std::memory_order_relaxed)) {
+            core::log::write(core::log::Channel::client,
+                             core::log::Level::warn,
+                             "ev=sobject_trace stage=correlate result=miss");
+        }
+        return;
+    }
+    const TraceContext trace = g_pendingFailure.trace;
+    g_pendingFailure = {};
+    report_failure(trace, entityName);
+}
 
 void* create_entry_point() noexcept {
     return reinterpret_cast<void*>(&create_body);

@@ -203,3 +203,43 @@ match their archived decrypted native bytes exactly. The candidate, exact v3 rol
 | deployed stage-diagnostic DLL | `9324aca2296ff1359686611383325c29a869dd98d5cb18184f1f752f7858154b` |
 | unchanged build-data cache | `562d6d9974bc05b35ff3883d4fb30a369e7c7e654f052b15fd78fbe725470a95` |
 | unchanged settings | `2a679c1e94ceba991dd6c51b747a83d1c4bd23bf835eadec783098f1ddaf7b7c` |
+
+## Stage diagnostic v1 result and corrected correlation
+
+The first live stage-diagnostic run showed that the broad failure cap could be consumed by a
+different entity before Hall instantiation began. At `t=217505`, immediately before the first
+`player_broadcast` error, the observer recorded a failed create with source `0x74FBA000`. All 256
+captured events had the same source and stopped at `handle_pool`; the cap was full by `t=218542`.
+The first exact `sobject` error did not arrive until `t=221205`, about 3.7 seconds later.
+
+| v1 observation | What it establishes |
+| --- | --- |
+| 256 identical traces adjacent to `player_broadcast` retries | `player_broadcast` reaches the native create path and its handle allocation returns `-1` |
+| No trace remained when the first exact `sobject` line appeared | v1 did not classify the missing Hall objects |
+| One global failure cap | A noisy entity can starve a later, relevant entity of diagnostic coverage |
+
+The corrected probe no longer publishes every failed create. Instead, it retains only the most
+recent failed-create trace in thread-local storage. When the existing retail-log observer sees the
+exact native `failed to create 'sobject' entity` line, it consumes and publishes that same thread's
+pending trace with `entity=sobject`. Each new top-level create clears stale pending state, and a
+one-shot `stage=correlate result=miss` warning makes a thread or call-order mismatch visible. This
+avoids hard-coding the `player_broadcast` source handle and keeps the hot path free of log flooding.
+
+The completed v1 run and its exact sources are archived under
+`backups/deployments/tribute-hall-sobject-stage-v1-20260816-235042/`.
+
+### Corrected correlated diagnostic candidate
+
+The official CMake cross-build completed successfully. No test targets are configured in this
+repository. The host has no `clang-format` executable, so formatting was checked against the
+repository policy and the final diff manually.
+
+| Correlated-diagnostic artifact | SHA-256 |
+| --- | --- |
+| candidate DLL | `142cb1762dd9c8a8bb0db7b6d5035c5c6bf50c42765a553bc2a0429e805be506` |
+| immediate rollback stage-v1 DLL | `9324aca2296ff1359686611383325c29a869dd98d5cb18184f1f752f7858154b` |
+| unchanged build-data cache | `562d6d9974bc05b35ff3883d4fb30a369e7c7e654f052b15fd78fbe725470a95` |
+| unchanged settings | `2a679c1e94ceba991dd6c51b747a83d1c4bd23bf835eadec783098f1ddaf7b7c` |
+
+The candidate, immediate rollback, unchanged runtime state, and exact sources are preserved under
+`backups/deployments/tribute-hall-sobject-correlated-20260817-000127/`.
