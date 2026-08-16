@@ -1,9 +1,13 @@
 #include "retail_log_enqueue_observer.h"
 
+#include <Windows.h>
+
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <intrin.h>
 #include <string_view>
 
 #include "../../../core/logging/log.h"
@@ -30,6 +34,88 @@ constexpr std::uint32_t kMostVerbose = 0;
 
 thread_local bool g_inObserver{};
 volatile LONG g_sinceAssert{};
+std::atomic_bool g_taskNineOriginReported{false};
+
+/** Site id of the initial-slice task-start line in this Shadowkeep image. */
+constexpr std::int32_t kTaskStartSite = 106;
+/** Exact native line emitted when the successful destination schedules task 9. */
+constexpr std::string_view kTaskNineStart =
+    "world_controller:task_manager: Started   task 'ENUM(9)'.";
+/** Frames kept from the native task-start call. */
+constexpr std::size_t kStackFrameCapacity = 16;
+/** This Shadowkeep image ends below RVA 0x09000000. */
+constexpr std::size_t kGameImageRvaLimit = 0x09000000;
+
+/**
+ * Tests the one task-start line this diagnostic needs without trusting the native buffer length.
+ * @param siteId Registered retail-log site id.
+ * @param text Borrowed native line.
+ * @return True only for the task-9 start line.
+ */
+[[nodiscard]] bool is_task_nine_start(std::int32_t siteId, const char* text) noexcept {
+    if (siteId != kTaskStartSite || text == nullptr) {
+        return false;
+    }
+    __try {
+        for (std::size_t index = 0; index < kTaskNineStart.size(); ++index) {
+            if (text[index] != kTaskNineStart[index]) {
+                return false;
+            }
+        }
+        return text[kTaskNineStart.size()] == '\0';
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+/**
+ * Records the native caller that schedules task 9 once per process.
+ * This is diagnostic only: it identifies the exact game code path for static analysis.
+ * @param siteId Registered retail-log site id.
+ * @param text Borrowed native line.
+ * @param caller Native return address left by the call into the enqueue funnel.
+ */
+void capture_task_nine_origin(std::int32_t siteId,
+                              const char* text,
+                              const void* caller) noexcept {
+    if (!is_task_nine_start(siteId, text) || caller == nullptr
+        || g_taskNineOriginReported.exchange(true, std::memory_order_relaxed)) {
+        return;
+    }
+    const auto* const base = reinterpret_cast<const std::byte*>(GetModuleHandleW(nullptr));
+    const auto* const address = static_cast<const std::byte*>(caller);
+    if (base == nullptr || address < base) {
+        return;
+    }
+    std::array<void*, kStackFrameCapacity> frames{};
+    const USHORT frameCount = RtlCaptureStackBackTrace(
+        0, static_cast<ULONG>(frames.size()), frames.data(), nullptr);
+    std::array<char, kEventCapacity> line{};
+    int written = std::snprintf(line.data(),
+                                line.size(),
+                                "ev=retail_origin stage=task_9 site=%d caller_rva=0x%zX stack=",
+                                siteId,
+                                static_cast<std::size_t>(address - base));
+    for (USHORT index = 0; written > 0 && index < frameCount
+                           && static_cast<std::size_t>(written) < line.size();
+         ++index) {
+        const auto* const frame = static_cast<const std::byte*>(frames[index]);
+        if (frame < base || static_cast<std::size_t>(frame - base) >= kGameImageRvaLimit) {
+            continue;
+        }
+        const int appended = std::snprintf(line.data() + written,
+                                           line.size() - static_cast<std::size_t>(written),
+                                           "%s0x%zX",
+                                           line[written - 1] == '=' ? "" : ",",
+                                           static_cast<std::size_t>(frame - base));
+        written = appended > 0 ? written + appended : 0;
+    }
+    if (written > 0 && static_cast<std::size_t>(written) < line.size()) {
+        core::log::write(core::log::Channel::client,
+                         core::log::Level::info,
+                         {line.data(), static_cast<std::size_t>(written)});
+    }
+}
 
 /**
  * Copies the native text into fixed storage as one printable line.
@@ -87,6 +173,7 @@ void capture_line(std::int32_t siteId, const char* text) noexcept {
  * @param text Native buffer holding the already-formatted line.
  */
 __declspec(noinline) void __fastcall enqueue_body(std::int32_t siteId, const char* text) noexcept {
+    const void* const caller = _ReturnAddress();
     // The verbosity setter logs through this same funnel; without this it would recurse.
     const bool outer = !g_inObserver;
     g_inObserver = true;
@@ -97,6 +184,7 @@ __declspec(noinline) void __fastcall enqueue_body(std::int32_t siteId, const cha
     if (outer) {
         if (siteId != kUnregisteredSite && text != nullptr) {
             capture_line(siteId, text);
+            capture_task_nine_origin(siteId, text, caller);
         }
         assert_verbosity();
         g_inObserver = false;

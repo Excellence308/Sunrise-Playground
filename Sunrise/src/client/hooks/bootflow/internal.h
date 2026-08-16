@@ -85,13 +85,12 @@ void uninstall_owner_activity_slot() noexcept;
 void uninstall_region_private() noexcept;
 
 /**
- * Finds the boot-flow step accessor, the only input to the world phase.
- * Nothing is detoured: the accessor is called, so a miss leaves the phase idle.
- * @return True when the target was found.
+ * Finds the boot-flow step accessor and attaches the temporary read-only task-9 gate observer.
+ * @return True when the accessor and the complete diagnostic batch were installed.
  */
 [[nodiscard]] bool install_world_step() noexcept;
 
-/** Clears the boot-flow step accessor it found. */
+/** Clears the boot-flow step accessor and detaches the temporary task-9 observer. */
 void uninstall_world_step() noexcept;
 
 /**
