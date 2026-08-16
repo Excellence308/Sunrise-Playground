@@ -47,3 +47,12 @@ Type 1 records remain schema mismatches, type 4 records are only partially under
 The next investigation should therefore stay on the entity/state record schemas and the lifecycle
 needed to instantiate `sobject`; it should not return to guessing activity, bubble, slice, or spawn
 selectors without contradictory evidence.
+
+## Runtime-object census lead
+
+A later Discord post described a global Tiger object array, generic handle-table resolution,
+per-class reflected field offsets, and a path to Havok rigid bodies. Its signatures do not match
+the supported Shadowkeep executable, but the object-census and reflection concepts may help
+separate missing objects from failed class/component activation. The build-specific assessment,
+existing Sunrise overlap, correctness defects, and safe validation plan are preserved in
+[`runtime-object-reflection-reference.md`](runtime-object-reflection-reference.md).
