@@ -45,7 +45,7 @@ constexpr std::int32_t kTaskStartSite = 106;
 constexpr std::string_view kTaskNineStart =
     "world_controller:task_manager: Started   task 'ENUM(9)'.";
 /** Site id of the generic simulation-entity creation failure in this Shadowkeep image. */
-constexpr std::int32_t kEntityFailureSite = 193;
+constexpr std::int32_t kEntityFailureSite = 188;
 /** Exact native line emitted when one static/simulation object cannot be instantiated. */
 constexpr std::string_view kSobjectFailure =
     "networking:simulation:entity: failed to create 'sobject' entity";

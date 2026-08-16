@@ -90,3 +90,29 @@ preserved under
 `backups/deployments/tribute-hall-sobject-origin-20260816-222714/`. The diagnostic is useful as
 soon as one ordinary Hall load reaches the first `sobject` failure; no interaction with the empty
 Hall is required.
+
+### Live v1 result and corrected v2
+
+The first live Hall load reached `activity:in_world` and emitted 112 exact
+`failed to create 'sobject' entity` lines. Every one used site `188`; no
+`ev=retail_origin stage=sobject_create_failure` event appeared because v1 intentionally required
+site `193`. This confirms the diagnostic stayed inert when its full guard did not match. The
+closed trace is preserved as `site188-missed-capture.log`, SHA-256
+`c6938669073477980abe20f7170a1477d472470f87f6d40769d5c8cd53de2540`.
+
+V2 changes only `kEntityFailureSite` from `193` to the live upstream-integrated value `188`; the
+exact native message guard, one-shot behavior, captured fields, and read-only handling are
+unchanged. An incremental official CMake build completed successfully with no Sunrise-source
+warnings.
+
+| V2 artifact | SHA-256 |
+| --- | --- |
+| deployed and archived site-188 diagnostic DLL | `db2f525b4e42ad8acb9931229a2a98380ae238925205f3f47931a5e228c6e40e` |
+| immediate rollback site-193 DLL | `d6657794c476bf90db3346aaef39ea2b907fb102f69d2ac30c77c07a3d8b2aca` |
+| unchanged build-data cache | `562d6d9974bc05b35ff3883d4fb30a369e7c7e654f052b15fd78fbe725470a95` |
+| unchanged settings | `2a679c1e94ceba991dd6c51b747a83d1c4bd23bf835eadec783098f1ddaf7b7c` |
+
+The v2 DLL, immediate rollback, corrected source, closed v1 trace, cache, and settings are
+preserved under
+`backups/deployments/tribute-hall-sobject-origin-v2-20260816-223757/`. One ordinary Hall load is
+again sufficient; no in-world interaction is required.
