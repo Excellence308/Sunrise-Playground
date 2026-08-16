@@ -16,6 +16,7 @@ void clear_groups() noexcept {
     packages::clear();
     assert_handler::clear();
     retail_log::clear();
+    entity_spawn::clear();
     content::clear();
     network::clear();
 }
@@ -91,6 +92,11 @@ bool resolve(std::span<const patterns::ImageRange> image) noexcept {
     retail_log::Targets retailLogTargets;
     if (retail_log::derive(resolvedMatches.subspan(kRetailLogFirstMatch), retailLogTargets)) {
         retail_log::publish(retailLogTargets);
+    }
+    // Diagnostic only: all five boundaries must resolve or entity tracing stays detached.
+    entity_spawn::Targets entitySpawnTargets;
+    if (entity_spawn::derive(image, entitySpawnTargets)) {
+        entity_spawn::publish(entitySpawnTargets);
     }
     // Also diagnostic: without it an assert halts the boot behind the game's own dialog.
     assert_handler::Targets assertTargets;

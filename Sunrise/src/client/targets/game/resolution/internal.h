@@ -7,6 +7,7 @@
 #include "../assert_handler/game_assert_targets.h"
 #include "../config_getter/game_config_getter_targets.h"
 #include "../content.h"
+#include "../entity_spawn/entity_spawn_targets.h"
 #include "../network.h"
 #include "../packages/game_package_targets.h"
 #include "../retail_log.h"

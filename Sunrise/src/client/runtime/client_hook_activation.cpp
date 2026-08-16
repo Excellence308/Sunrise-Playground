@@ -17,6 +17,7 @@
 #include "../hooks/bootflow/bootflow_hook_lifecycle.h"
 #include "../hooks/config_getter/config_getter_lifecycle.h"
 #include "../hooks/cursor/runtime.h"
+#include "../hooks/entity_spawn/entity_spawn_lifecycle.h"
 #include "../hooks/graphics/graphics_hook_lifecycle.h"
 #include "../hooks/network/runtime.h"
 #include "../hooks/noclip/runtime.h"
@@ -103,8 +104,9 @@ void report_resolve_failure() noexcept {
         core::log::Channel::client, core::log::Level::error, std::string_view(line.data(), length));
 }
 
-/** Clears both main-image target groups while no game hook owns their entries. */
+/** Clears main-image target groups while no game hook owns their entries. */
 void clear_game_targets() noexcept {
+    targets::game::entity_spawn::clear();
     targets::game::content::clear();
     targets::game::network::clear();
 }
@@ -161,6 +163,7 @@ void clear_game_targets() noexcept {
                                  : "ev=activate stage=package_keys result=fail");
     // Diagnostic capture reports its own outcome and never demotes this stage.
     (void)hooks::retail_log::install();
+    (void)hooks::entity_spawn::install();
     (void)hooks::assert_handler::install();
     (void)hooks::config_getter::install();
     // Boot-step fixes scan for their own single-site targets; each reports its own outcome.

@@ -5,6 +5,7 @@
 #include "../hooks/bootflow/bootflow_hook_lifecycle.h"
 #include "../hooks/config_getter/config_getter_lifecycle.h"
 #include "../hooks/cursor/runtime.h"
+#include "../hooks/entity_spawn/entity_spawn_lifecycle.h"
 #include "../hooks/graphics/graphics_hook_lifecycle.h"
 #include "../hooks/network/runtime.h"
 #include "../hooks/noclip/runtime.h"
@@ -69,6 +70,13 @@ bool shutdown() noexcept {
         ReleaseSRWLockExclusive(&runtime::g_lock);
         return false;
     }
+    if (!hooks::entity_spawn::uninstall()) {
+        core::log::write(core::log::Channel::client,
+                         core::log::Level::error,
+                         "ev=shutdown stage=sobject_trace result=fail");
+        ReleaseSRWLockExclusive(&runtime::g_lock);
+        return false;
+    }
     if (!hooks::retail_log::uninstall()) {
         core::log::write(core::log::Channel::client,
                          core::log::Level::error,
@@ -88,6 +96,7 @@ bool shutdown() noexcept {
         }
         runtime::g_platformModule = nullptr;
     }
+    targets::game::entity_spawn::clear();
     targets::game::retail_log::clear();
     targets::game::content::clear();
     targets::game::network::clear();

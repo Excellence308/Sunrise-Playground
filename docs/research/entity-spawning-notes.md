@@ -146,3 +146,60 @@ The v3 DLL, immediate rollback, corrected and previous source, closed trace, cac
 preserved under
 `backups/deployments/tribute-hall-sobject-origin-v3-20260816-224731/`. One ordinary Hall load is
 sufficient; no in-world interaction is required.
+
+## Live v3 result and native entity-creation boundary
+
+The exact-text v3 probe succeeded on the next ordinary Hall load. The first matching line used
+site `186` and produced this origin:
+
+`caller_rva=0x16EE3F7 stack=0x16EE3F7,0xB428E3,0x3BD462,0x4D721C,0x3F860D,0x403295,0x56C72C,0x56DD82,0x575AAE,0x559F03,0x434A39,0x435733,0x3CD6FF,0x3C82EB`
+
+The changing site values `188`, `185`, and `186` confirm that exact text is the stable match key.
+The native caller stack is stable enough to identify the entity path.
+
+The executable on disk is packed, so its bytes at these RVAs are not usable code. With the game
+running, small ranges were copied read-only from the already decrypted main-image mapping through
+`/proc/<pid>/mem`. No debugger was attached, no thread was suspended, and no game memory was
+written. Those snapshots and the closed-run log are preserved under
+`backups/deployments/tribute-hall-sobject-native-origin-20260816-231812/`.
+
+### Resolved native path
+
+| RVA | Role | Failure evidence |
+| --- | --- | --- |
+| `0x16EE3F2` | Emits the exact `failed to create 'sobject' entity` line | Downstream symptom after the returned output remains `-1` |
+| `0x170F190` | Owns the top-level simulation-entity output | Calls handle allocation, then commit; commit failure resets the output to `-1` |
+| `0x1711D10` | Claims one of `0x2000` simulation handles | Leaves the output at `-1` if no handle is available |
+| `0x170B0F0` | Allocates buffers and commits the entity record | Returns false for record-pool, buffer-setup, or registration failure |
+| `0x170B2B0` | Claims one of `0x400` entity records | Returns null when the record pool cannot supply a slot |
+| `0x171C280` | Applies the final native registration mode | Returns false only when its required registration allocation fails |
+
+The game therefore is not merely missing a Hall presentation flag. It requests the static
+objects, enters the native simulation-entity creator, and receives a real `-1` result before the
+error line is emitted. Forcing the final result would skip substantial handle, record, buffer,
+and registration bookkeeping and is not a safe next experiment.
+
+### Stage diagnostic
+
+The next fork-local build adds five signature-resolved, read-only detours in one all-or-nothing
+transaction. A miss disables only this optional trace and does not demote normal Sunrise
+activation. Results are correlated per thread and capped at 256 failed creates per process.
+
+| Logged reason | Proven boundary |
+| --- | --- |
+| `handle_pool` | The `0x2000` simulation-handle allocator returned `-1` |
+| `record_pool` | A handle existed, but the `0x400` record allocator returned null |
+| `buffer_setup` | A record existed, but commit stopped before final registration |
+| `registration` | Final native registration was reached and returned false |
+| `commit_unknown` or `create_unknown` | The known nested stages succeeded but the enclosing routine still rejected the create |
+
+The general game allocator is deliberately not hooked. That keeps the diagnostic off a hot,
+unrelated path and preserves normal performance outside these entity-create calls. The official
+CMake cross-build completed successfully with no Sunrise-source warnings. All five signatures
+match their archived decrypted native bytes exactly. The candidate, exact v3 rollback, unchanged runtime state, documentation, and source are preserved under `backups/deployments/tribute-hall-sobject-stage-diagnostic-20260816-233147/`.
+
+| Stage-diagnostic artifact | SHA-256 |
+| --- | --- |
+| deployed stage-diagnostic DLL | `9324aca2296ff1359686611383325c29a869dd98d5cb18184f1f752f7858154b` |
+| unchanged build-data cache | `562d6d9974bc05b35ff3883d4fb30a369e7c7e654f052b15fd78fbe725470a95` |
+| unchanged settings | `2a679c1e94ceba991dd6c51b747a83d1c4bd23bf835eadec783098f1ddaf7b7c` |
