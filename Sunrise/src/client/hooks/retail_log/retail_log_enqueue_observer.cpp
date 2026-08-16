@@ -39,13 +39,9 @@ volatile LONG64 g_nextAssertTick{};
 std::atomic_bool g_taskNineOriginReported{false};
 std::atomic_bool g_sobjectFailureOriginReported{false};
 
-/** Site id of the initial-slice task-start line in this Shadowkeep image. */
-constexpr std::int32_t kTaskStartSite = 106;
 /** Exact native line emitted when the successful destination schedules task 9. */
 constexpr std::string_view kTaskNineStart =
     "world_controller:task_manager: Started   task 'ENUM(9)'.";
-/** Site id of the generic simulation-entity creation failure in this Shadowkeep image. */
-constexpr std::int32_t kEntityFailureSite = 188;
 /** Exact native line emitted when one static/simulation object cannot be instantiated. */
 constexpr std::string_view kSobjectFailure =
     "networking:simulation:entity: failed to create 'sobject' entity";
@@ -55,18 +51,13 @@ constexpr std::size_t kStackFrameCapacity = 16;
 constexpr std::size_t kGameImageRvaLimit = 0x09000000;
 
 /**
- * Tests one exact registered line without trusting the native buffer length.
- * @param siteId Registered retail-log site id.
+ * Tests one exact native line without trusting the native buffer length.
  * @param text Borrowed native line.
- * @param expectedSite Expected registered site.
  * @param expected Exact expected text.
  * @return True only for the expected line.
  */
-[[nodiscard]] bool matches_line(std::int32_t siteId,
-                                const char* text,
-                                std::int32_t expectedSite,
-                                std::string_view expected) noexcept {
-    if (siteId != expectedSite || text == nullptr) {
+[[nodiscard]] bool matches_line(const char* text, std::string_view expected) noexcept {
+    if (text == nullptr) {
         return false;
     }
     __try {
@@ -87,7 +78,6 @@ constexpr std::size_t kGameImageRvaLimit = 0x09000000;
  * @param siteId Registered retail-log site id.
  * @param text Borrowed native line.
  * @param caller Native return address left by the call into the enqueue funnel.
- * @param expectedSite Expected registered site.
  * @param expected Exact expected text.
  * @param stage Stable event name.
  * @param reported One-shot publication guard.
@@ -95,11 +85,10 @@ constexpr std::size_t kGameImageRvaLimit = 0x09000000;
 void capture_origin(std::int32_t siteId,
                     const char* text,
                     const void* caller,
-                    std::int32_t expectedSite,
                     std::string_view expected,
                     std::string_view stage,
                     std::atomic_bool& reported) noexcept {
-    if (!matches_line(siteId, text, expectedSite, expected) || caller == nullptr
+    if (!matches_line(text, expected) || caller == nullptr
         || reported.exchange(true, std::memory_order_relaxed)) {
         return;
     }
@@ -210,14 +199,12 @@ __declspec(noinline) void __fastcall enqueue_body(std::int32_t siteId, const cha
             capture_origin(siteId,
                            text,
                            caller,
-                           kTaskStartSite,
                            kTaskNineStart,
                            "task_9",
                            g_taskNineOriginReported);
             capture_origin(siteId,
                            text,
                            caller,
-                           kEntityFailureSite,
                            kSobjectFailure,
                            "sobject_create_failure",
                            g_sobjectFailureOriginReported);

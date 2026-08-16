@@ -116,3 +116,33 @@ The v2 DLL, immediate rollback, corrected source, closed v1 trace, cache, and se
 preserved under
 `backups/deployments/tribute-hall-sobject-origin-v2-20260816-223757/`. One ordinary Hall load is
 again sufficient; no in-world interaction is required.
+
+### Live v2 result and exact-text v3
+
+The next ordinary Hall load again reached `activity:in_world` and emitted 112 exact
+`failed to create 'sobject' entity` lines, but every line used site `185`. V2 intentionally
+required site `188`, so it emitted no origin event and remained inert.
+
+The same process recorded the exact task-9 text under sites `49`, `76`, and `177`. Site `185`
+also carried both `player_broadcast` and `sobject` failures. These observations establish that
+the registered site value is not a stable executable address or safe matching key; it varies with
+the runtime log origin/registration path. The closed trace is preserved as
+`site185-and-phoenix-dive.log`, SHA-256
+`4214df37dd5f5a5d201bb86a1d27ff009094a3c18e9f868298551aaa2a518f6c`.
+
+V3 removes the expected-site parameter from both one-shot origin probes. Each probe now matches
+the complete native text only, while the observed site remains in the emitted evidence. Null and
+exception guards, caller and stack capture, and one-shot publication are unchanged. The official
+CMake build completed successfully with no Sunrise-source warnings.
+
+| V3 artifact | SHA-256 |
+| --- | --- |
+| deployed and archived exact-text diagnostic DLL | `daeb24dd51bf77f9e274a078281d21bdf1bd4f3bbcdb1df82629c2eea846dd0c` |
+| immediate rollback site-188 DLL | `db2f525b4e42ad8acb9931229a2a98380ae238925205f3f47931a5e228c6e40e` |
+| unchanged build-data cache | `562d6d9974bc05b35ff3883d4fb30a369e7c7e654f052b15fd78fbe725470a95` |
+| unchanged settings | `2a679c1e94ceba991dd6c51b747a83d1c4bd23bf835eadec783098f1ddaf7b7c` |
+
+The v3 DLL, immediate rollback, corrected and previous source, closed trace, cache, and settings are
+preserved under
+`backups/deployments/tribute-hall-sobject-origin-v3-20260816-224731/`. One ordinary Hall load is
+sufficient; no in-world interaction is required.
