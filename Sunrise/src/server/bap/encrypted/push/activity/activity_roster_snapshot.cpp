@@ -8,6 +8,7 @@
 #include "../../../../../state/activity/destination/activity_destination_snapshot.h"
 #include "../../../../../state/activity/destination/activity_destination_spawn_binding.h"
 #include "../../../../../state/activity/membership/activity_membership_query.h"
+#include "../../../../../state/activity/runtime.h"
 #include "../../../../../state/build_data/runtime.h"
 #include "../../../../../state/runtime/runtime.h"
 #include "activity_arrival.h"
@@ -35,6 +36,10 @@ constexpr std::uint32_t kFoldPrime = 16777619U;
 constexpr std::uint8_t kSlotTypeParticipation = 13;
 /** The join request names its character in the low half of the SOID, so compare on that half. */
 constexpr std::uint64_t kIdentityLowMask = 0xFFFFFFFFULL;
+/** Exact source-only Trophy Hall roster shape used by the staged-publication control. */
+constexpr std::string_view kTrophyHallDestination = "trophy_hall_freeroam";
+constexpr std::uint32_t kTrophyHallPrimaryGroup = 0x4786C0E0;
+constexpr std::uint32_t kTrophyHallAmbientGroup = 0xF18B720F;
 
 /**
  * Finds the full authored SOID for the character the join request named.
@@ -94,6 +99,29 @@ fill_roster(const layouts::Definition& layout, Scratch& scratch, message::Roster
         }
     }
     return roster.playerKeyGroup != 0;
+}
+
+/**
+ * Stages the exact experimental Trophy Hall roster through the client's observed arrival phase.
+ * The primary group publishes while loading. Once the client reaches in-world, the ordinary
+ * roster-change sequence publishes both groups on its next keepalive. This remains outside the
+ * official Sunrise behavior and avoids changing or rebuilding the extracted scenario cache.
+ * @param destination Current destination name.
+ * @param roster Filled roster that may match the control shape.
+ */
+void apply_trophy_hall_staged_publication(std::string_view destination,
+                                          message::Roster& roster) noexcept {
+    if (destination != kTrophyHallDestination || roster.groupCount != 2
+        || roster.groups[0].key != kTrophyHallPrimaryGroup
+        || roster.groups[1].key != kTrophyHallAmbientGroup
+        || roster.playerKeyGroup != kTrophyHallPrimaryGroup) {
+        return;
+    }
+    if (state::activity::world_phase() == state::activity::WorldPhase::arrived) {
+        return;
+    }
+    roster.groups[1] = {};
+    roster.groupCount = 1;
 }
 
 /** @param roster Published groups. @return One value that changes when the group set changes. */
@@ -204,6 +232,7 @@ RosterOutcome build_roster_snapshot(Session& session,
     if (!fill_roster(layout, scratch, snapshot.roster)) {
         return RosterOutcome::noGroups;
     }
+    apply_trophy_hall_staged_publication(name, snapshot.roster);
 
     const state::activity::defaults::FallbackPolicy& fallback =
         defaults.defaultDestination.fallback;
