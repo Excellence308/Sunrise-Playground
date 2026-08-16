@@ -23,6 +23,10 @@ verified until they have been tested in the HUD and in an activity.
 See [the release notes](docs/releases/0.2.1-playground.1.md) for the exact tested boundary and known
 limitations.
 
+Development now starts directly from the official `stanuwu/Sunrise` `master` branch. See the
+[upstream maintenance guide](docs/upstream-maintenance.md) for the branch boundaries and update
+routine.
+
 > This mod installs onto an old build of the game and allows you to play it offline, loading into
 > destinations and exploring them.
 >
