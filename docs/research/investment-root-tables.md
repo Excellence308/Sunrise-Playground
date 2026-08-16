@@ -749,6 +749,23 @@ were not changed; their SHA-256 values remain
 `746ca57fdaa3882b5a79e52eb846091485c22af80be9e01b27c775618af6ba10` and
 `bead2c68e79cc0facf93527c9d29c190dfe9e552d27f37f041444f39a7966a27`, respectively.
 
+That first clean post-migration build stopped after 15 ms at `initialize stage=state`, before the
+sense observer could run. The installed cache and both source histories all named their format 34,
+but the pre-migration header had 21 32-bit count fields while the merged header had 25 plus four
+vendor record banks. Upstream's direct gameplay commit had correctly advanced its format from 23
+to 24; replaying the Playground's later numeric bumps made the two incompatible histories collide
+again at 34. None of the five intervening PR merges changed the cache layout. The four-line failure
+trace is archived as
+`backups/deployments/tribute-hall-sense-type23-gap-cache35-20260816/bootstrap-state-failure.log`.
+
+The merged format is now 35, causing the old format-34 cache to take Sunrise's ordinary stale-cache
+rebuild path. The corrected clean build, archived DLL, and installed DLL are byte-identical at
+SHA-256 `60b064681df09488aeb5472af797699faced62243eb67f0d984201d8b4a7a25a`. Its archive is
+`backups/deployments/tribute-hall-sense-type23-gap-cache35-20260816/`, which also preserves the
+failed format-34 DLL and the last known-working pre-migration DLL. Deployment did not edit settings
+or the old cache; their hashes remain the values above so the next launch itself will exercise the
+versioned rebuild path.
+
 The successful Moon control trace is preserved as
 `backups/deployments/tribute-hall-task9-origin-20260816/sunrise-moon-task9-origin.log` with SHA-256
 `b3351bc22a27fede6037e069887e705a94e3aa23f0e71bc960eed8cf229f91db`.
