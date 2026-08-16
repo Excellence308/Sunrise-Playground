@@ -56,3 +56,37 @@ the supported Shadowkeep executable, but the object-census and reflection concep
 separate missing objects from failed class/component activation. The build-specific assessment,
 existing Sunrise overlap, correctness defects, and safe validation plan are preserved in
 [`runtime-object-reflection-reference.md`](runtime-object-reflection-reference.md).
+
+## 2026-08-16 sobject-creation origin diagnostic
+
+The current upstream-integrated baseline reaches `activity:in_world` with the complete two-group,
+167-object roster and 4,120-byte type-5 roster body. Its remaining Hall failure is later: the
+Client reports 138 `failed to create 'sobject' entity` lines as region `0xF18B720F` becomes
+active. The earlier roster-framing and prologue-loading failures are therefore not the current
+boundary.
+
+The next diagnostic reuses Sunrise's existing retail-log detour. On the first exact site-193 line
+
+`networking:simulation:entity: failed to create 'sobject' entity`
+
+it records the native caller RVA and up to 16 game-image stack-frame RVAs in one
+`ev=retail_origin stage=sobject_create_failure` event. It then remains inert for the rest of the
+process. It does not read or retain activity payloads, object memory, entity identifiers, or field
+values; it does not alter the native call or its return. This is local research instrumentation,
+not behavior specified by an upstream guide.
+
+A clean official CMake cross-build completed successfully. The unchanged vendor code emitted its
+usual three portability warnings; Sunrise source emitted no warnings.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| deployed and archived diagnostic DLL | `d6657794c476bf90db3346aaef39ea2b907fb102f69d2ac30c77c07a3d8b2aca` |
+| immediate rollback DLL | `35ce5fbc3ff7f9f4cd97a0a8f8fc0b5719dc92b250a470ea5c6d8c5dd3e90576` |
+| unchanged build-data cache | `562d6d9974bc05b35ff3883d4fb30a369e7c7e654f052b15fd78fbe725470a95` |
+| unchanged settings | `2a679c1e94ceba991dd6c51b747a83d1c4bd23bf835eadec783098f1ddaf7b7c` |
+
+The candidate, rollback DLL, pre-deployment log, cache, settings, and exact observer source are
+preserved under
+`backups/deployments/tribute-hall-sobject-origin-20260816-222714/`. The diagnostic is useful as
+soon as one ordinary Hall load reaches the first `sobject` failure; no interaction with the empty
+Hall is required.

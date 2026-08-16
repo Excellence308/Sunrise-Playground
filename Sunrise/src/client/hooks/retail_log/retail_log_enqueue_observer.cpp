@@ -37,51 +37,70 @@ thread_local bool g_inObserver{};
 /** Tick at which the next re-assert is due. Zero makes the first call assert. */
 volatile LONG64 g_nextAssertTick{};
 std::atomic_bool g_taskNineOriginReported{false};
+std::atomic_bool g_sobjectFailureOriginReported{false};
 
 /** Site id of the initial-slice task-start line in this Shadowkeep image. */
 constexpr std::int32_t kTaskStartSite = 106;
 /** Exact native line emitted when the successful destination schedules task 9. */
 constexpr std::string_view kTaskNineStart =
     "world_controller:task_manager: Started   task 'ENUM(9)'.";
-/** Frames kept from the native task-start call. */
+/** Site id of the generic simulation-entity creation failure in this Shadowkeep image. */
+constexpr std::int32_t kEntityFailureSite = 193;
+/** Exact native line emitted when one static/simulation object cannot be instantiated. */
+constexpr std::string_view kSobjectFailure =
+    "networking:simulation:entity: failed to create 'sobject' entity";
+/** Frames kept from one matched native log call. */
 constexpr std::size_t kStackFrameCapacity = 16;
 /** This Shadowkeep image ends below RVA 0x09000000. */
 constexpr std::size_t kGameImageRvaLimit = 0x09000000;
 
 /**
- * Tests the one task-start line this diagnostic needs without trusting the native buffer length.
+ * Tests one exact registered line without trusting the native buffer length.
  * @param siteId Registered retail-log site id.
  * @param text Borrowed native line.
- * @return True only for the task-9 start line.
+ * @param expectedSite Expected registered site.
+ * @param expected Exact expected text.
+ * @return True only for the expected line.
  */
-[[nodiscard]] bool is_task_nine_start(std::int32_t siteId, const char* text) noexcept {
-    if (siteId != kTaskStartSite || text == nullptr) {
+[[nodiscard]] bool matches_line(std::int32_t siteId,
+                                const char* text,
+                                std::int32_t expectedSite,
+                                std::string_view expected) noexcept {
+    if (siteId != expectedSite || text == nullptr) {
         return false;
     }
     __try {
-        for (std::size_t index = 0; index < kTaskNineStart.size(); ++index) {
-            if (text[index] != kTaskNineStart[index]) {
+        for (std::size_t index = 0; index < expected.size(); ++index) {
+            if (text[index] != expected[index]) {
                 return false;
             }
         }
-        return text[kTaskNineStart.size()] == '\0';
+        return text[expected.size()] == '\0';
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
 }
 
 /**
- * Records the native caller that schedules task 9 once per process.
+ * Records the native origin of one exact line once per process.
  * This is diagnostic only: it identifies the exact game code path for static analysis.
  * @param siteId Registered retail-log site id.
  * @param text Borrowed native line.
  * @param caller Native return address left by the call into the enqueue funnel.
+ * @param expectedSite Expected registered site.
+ * @param expected Exact expected text.
+ * @param stage Stable event name.
+ * @param reported One-shot publication guard.
  */
-void capture_task_nine_origin(std::int32_t siteId,
-                              const char* text,
-                              const void* caller) noexcept {
-    if (!is_task_nine_start(siteId, text) || caller == nullptr
-        || g_taskNineOriginReported.exchange(true, std::memory_order_relaxed)) {
+void capture_origin(std::int32_t siteId,
+                    const char* text,
+                    const void* caller,
+                    std::int32_t expectedSite,
+                    std::string_view expected,
+                    std::string_view stage,
+                    std::atomic_bool& reported) noexcept {
+    if (!matches_line(siteId, text, expectedSite, expected) || caller == nullptr
+        || reported.exchange(true, std::memory_order_relaxed)) {
         return;
     }
     const auto* const base = reinterpret_cast<const std::byte*>(GetModuleHandleW(nullptr));
@@ -95,7 +114,9 @@ void capture_task_nine_origin(std::int32_t siteId,
     std::array<char, kEventCapacity> line{};
     int written = std::snprintf(line.data(),
                                 line.size(),
-                                "ev=retail_origin stage=task_9 site=%d caller_rva=0x%zX stack=",
+                                "ev=retail_origin stage=%.*s site=%d caller_rva=0x%zX stack=",
+                                static_cast<int>(stage.size()),
+                                stage.data(),
                                 siteId,
                                 static_cast<std::size_t>(address - base));
     for (USHORT index = 0; written > 0 && index < frameCount
@@ -186,7 +207,20 @@ __declspec(noinline) void __fastcall enqueue_body(std::int32_t siteId, const cha
     if (outer) {
         if (siteId != kUnregisteredSite && text != nullptr) {
             capture_line(siteId, text);
-            capture_task_nine_origin(siteId, text, caller);
+            capture_origin(siteId,
+                           text,
+                           caller,
+                           kTaskStartSite,
+                           kTaskNineStart,
+                           "task_9",
+                           g_taskNineOriginReported);
+            capture_origin(siteId,
+                           text,
+                           caller,
+                           kEntityFailureSite,
+                           kSobjectFailure,
+                           "sobject_create_failure",
+                           g_sobjectFailureOriginReported);
         }
         assert_verbosity();
         g_inObserver = false;
