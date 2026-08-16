@@ -241,6 +241,535 @@ enemy or decoration groups.
 | `0x64EC43A5` | 3 | yes | yes | Unnamed alternate arrival set |
 | `0x9E91918E` | 3 | yes | yes | Unnamed alternate arrival set |
 
+### Initial-slice task-manager diagnostic
+
+The Hall's current blocker is after map precache and instantiation, in boot-flow step 36
+(`activity:initial_slice_set_loading`). A read-only pass-through diagnostic observes the native
+step-36 callback's return value and task-manager masks; it returns the original value unchanged and
+never writes to the Client's task state. This hook is research instrumentation outside the official
+Sunrise guide and must remain uncommitted until the behavior is understood.
+
+Static analysis maps 11 task descriptors in the initial-slice state. Dependency masks use the task
+id as the bit index:
+
+| Task | Callback RVA | Dependency mask | Required earlier tasks |
+| ---: | --- | --- | --- |
+| 0 | `0xD48050` | `0x000` | none |
+| 1 | `0xD47980` | `0x000` | none |
+| 2 | `0xD46BF0` | `0x002` | 1 |
+| 3 | `0xD46050` | `0x002` | 1 |
+| 4 | `0xD47760` | `0x000` | none |
+| 5 | `0xD48140` | `0x001` | 0 |
+| 6 | `0xD46900` | `0x010` | 4 |
+| 7 | `0xD46DD0` | `0x010` | 4 |
+| 8 | `0xD46B50` | `0x01E` | 1, 2, 3, 4 |
+| 9 | `0xD474D0` | `0x090` | 4, 7 |
+| 10 | `0xD471D0` | `0x290` | 4, 7, 9 |
+
+The four fields at state offsets `+0x198`, `+0x1A0`, `+0x1A8`, and `+0x1B0` are four 64-bit task
+masks, not four eight-byte task records. Equivalently, they are task-manager offsets `+0x168`,
+`+0x170`, `+0x178`, and `+0x180`. An earlier diagnostic printed only the low byte at each offset
+and called bit 7 a completion flag. That output was useful for task 7 but could not show task 9,
+which is bit 9 in the second byte. The corrected diagnostic uses neutral mask names until each
+mask's exact scheduler meaning is proven:
+
+| State offset | Manager offset | Correct diagnostic field | Coverage |
+| --- | --- | --- | --- |
+| `+0x198` | `+0x168` | `mask_198` | tasks 0-63 |
+| `+0x1A0` | `+0x170` | `mask_1A0` | tasks 0-63 |
+| `+0x1A8` | `+0x178` | `mask_1A8` | tasks 0-63 |
+| `+0x1B0` | `+0x180` | `mask_1B0` | tasks 0-63 |
+
+A normal Moon control run supplies spawn set `0x2EA8FB98` and reaches the observed callback's
+return 2 with the following complete masks:
+
+| Snapshot | `mask_198` | `mask_1A0` | `mask_1A8` | `mask_1B0` |
+| --- | --- | --- | --- | --- |
+| Moon, task-7 return 2 | `0x00000000000007FF` | `0x00000000000000FF` | `0x0000000000000000` | `0x0000000000000073` |
+| Hall, task-7 return 2 | `0x00000000000007FF` | `0x00000000000000FF` | `0x0000000000000000` | `0x0000000000000033` |
+
+Task 9 starts immediately afterward and completes in 2.421 seconds; task 10 then starts and
+completes in 1.702 seconds before boot flow advances through steps 37 and 38
+(`activity:in_world`). The exact native task-9 start line originates at caller RVA `0xD49EDC`;
+its captured stack begins `0xD49EDC, 0xD4B4EB, 0xD4BA29, 0xE2359B, 0xE43539`.
+
+The Hall control with explicit spawn set `0x2EA8FB98` corrects the earlier interpretation that task
+9 never started. At the task-7 return-2 snapshot, only `mask_1B0` differs: Hall has `0x33` where
+Moon has `0x73`, meaning task 6 has not yet reached state 3. Task 9 starts immediately anyway.
+Hall tasks 2 and 6 then reach state 3 after 5.846 and 5.842 seconds, task 3 completes after 6.112
+seconds, task 8 starts and completes in 29 ms, and the initial-slice transition reports completed.
+Task 9 nevertheless remains pending, task 10 never starts, and boot flow stays at step 36. The
+missing bit 6 is therefore a timing symptom, not the final blocker.
+
+Static analysis of task 9's callback at RVA `0xD474D0` shows that it checks state 3 for tasks 0, 2,
+5, and 6, requires task 8 to be past state 0, and also evaluates four non-task readiness gates. The
+observed Hall sequence eventually satisfies every task-state predicate, so the next bounded probe
+should report the remaining gates without changing them:
+
+| Task-9 gate | Static location | Required result | Meaning |
+| --- | --- | --- | --- |
+| Global byte | `0x27F66F4` | zero | Unknown; nonzero returns pending early |
+| Selector state | calls at `0x4AFE80` and `0x4FFDA0` | derived Boolean true | Unknown |
+| Selected object byte | `0xA55FF0(id)` result `+0x08` | nonzero | Unknown |
+| Tasks 0, 2, 5, 6 | four task masks | state 3 | Satisfied after Hall transition work |
+| Task 8 | four task masks | decoded state nonzero | State 0 fails; states 1-3 pass, and native `-1` also passes this test |
+| Final global predicate | call at `0xC240F0` | false | Unknown |
+
+The follow-up observer is isolated in `task_nine_gate_observer.cpp` rather than expanding the
+production world-step implementation. Its task-9 signature resolves uniquely at RVA `0xD474D0`
+in the saved Shadowkeep text image. It resolves the selector, selected-object lookup, final
+predicate, and early global byte from task 9's own checked instructions, then installs all four
+detours in one transaction. Each replacement calls the native target exactly once and returns that
+unchanged result. Thread-local bracketing plus exact return-address checks ensure helper calls are
+recorded only when task 9 itself made them; the diagnostic never invokes a helper a second time.
+It reports only changed snapshots and labels still-unknown values neutrally. This remains
+uncommitted research instrumentation outside the official Sunrise guide.
+
+The successful Moon gate control reaches the following final task-9 snapshot immediately before
+the callback returns 3:
+
+| Gate | Moon value | Direct conclusion |
+| --- | --- | --- |
+| Early global byte | readable, `0` | Required zero state is present |
+| Tasks 0, 2, 5, 6, 8 | `3,3,3,3,3` | Every observed task is complete |
+| Selector | called, returned true, value `3` | Selector gate is satisfied |
+| Selected object | id `0x3CFEC000`, present, byte `+0x08 = 1` | Selected-object gate is satisfied |
+| Final predicate | called, returned false | Required false state is present |
+
+Task 9 completes after 1.650 seconds, task 10 completes after 1.705 seconds, and boot flow enters
+steps 37 and 38. During earlier pending polls, the observer read the selector output slot even when
+the selector returned false. The native callback does not read that slot on the false path, so its
+alternating `0`/uninitialized values are diagnostic noise rather than game state. The observer now
+records the output only on a true selector result before the Hall comparison.
+
+A fresh launch from the Hall's own node with Activity Override disabled confirms that its client
+selection names activity index 143, hash `0xE5FBF1EF`, and package `trophy_hall_freeroam`. Both
+the optional arrival-bubble hash and spawn-set hash are absent (`0x811C9DC5`). The host derives
+runtime region 0 and slice set 0 while preserving the absent spawn set. At world step 36, every
+observed prerequisite task is in state 3 and the early byte is zero, but task 9 returns 1 with the
+following non-task values:
+
+| Gate | Natural Hall-node value | Moon control difference |
+| --- | --- | --- |
+| Selector | returned false; output not read | Moon returns true and writes `3` |
+| Selected object | id `0x1CFEC000`; null | Moon uses `0x3CFEC000`, present, byte `+0x08 = 1` |
+| Final predicate | returned false | Same as Moon |
+
+The bounded selector experiment still calls the native selector first. It substitutes value `3`
+and a true result only when the direct task-9 call returned false, tasks 0, 2, 5, 6, and 8 are all
+state 3, and the early byte is zero. Task 9's selected-object and final-predicate checks remain
+native. The override fires, but task 9 remains pending: the selector reports true with value `3`,
+while the selected-object lookup is still null. This is a useful negative result, not a production
+fix.
+
+The captured unpacked callback corrects one interpretation of the cross-run object ids. The first
+helper at task offset `+0x5A` writes the object id to a separate local, and the selected-object
+lookup consumes that local unconditionally. The selector at `+0x64` writes another local and only
+controls a Boolean gate. Therefore the Hall ids `0x1CFEC000`, `0x39FEC000`, and `0x74FEC000`
+from separate launches must not be treated as a value transformed by the selector; their changing
+high byte is run-specific. The stable conclusions are that Hall's selector is false and its
+selected-object lookup is null, while both gates are satisfied in the Moon control.
+
+A separate bounded completion experiment leaves every native helper unchanged. Only after the
+exact observed Hall-stall shape is complete does it replace task 9's native return 1 with return 3.
+That makes task 9 complete immediately, task 10 complete normally after 1.919 seconds, physics join
+finish after 6.012 seconds, and boot flow enter step 38 (`activity:in_world`). It does not create a
+valid arrival: the natural node still carries absent spawn hash `0x811C9DC5`, spawn state remains
+zero, no teleport target appears, the Client repeatedly fades, and its in-world job fiber reports a
+continuous hitch. Task 9 is therefore guarding real arrival readiness; bypassing it is diagnostic
+evidence, not the fix.
+
+The full `0x290`-byte runtime capture resolves task 9's final native decision exactly. Its default
+return is 1. It changes that return to 3 only when all of the following are true: the selector's
+derived Boolean is true, the selected-object lookup is non-null with byte `+0x08` nonzero, decoded
+tasks 0, 2, 5, and 6 all equal state 3, decoded task 8 is nonzero, and the final predicate returns
+false. The task-8 check is literally a zero test; its decoded absent value `-1` would also pass.
+This confirms that the completion experiment bypasses two native Hall failures at once: its
+selector remains false and its selected-object lookup remains null.
+
+A follow-up test supplied each concrete spawn-set choice exposed by Activity Override while
+retaining the same bounded task-9 return experiment:
+
+| Forced spawn set | Boot-flow result | Published arrival state | Visible result |
+| --- | --- | --- | --- |
+| `0x2EA8FB98` | Reached step 38, `activity:in_world` | `spawn_state=0`, `teleport_state=0`, `teleport_slice=-1` | Solid black screen |
+| `0x64EC43A5` | Reached step 38, `activity:in_world` | `spawn_state=0`, `teleport_state=0`, `teleport_slice=-1` | Solid black screen |
+| `0x9E91918E` | Reached step 38, `activity:in_world` | `spawn_state=0`, `teleport_state=0`, `teleport_slice=-1` | Solid black screen |
+
+Changing the roster's spawn-set field is therefore insufficient to create or acknowledge the
+player. The three values change the selected launch data, but none repairs either native task-9
+object gate or produces a camera. Further blind spawn-set iteration is not justified by this
+evidence; the next bounded observer should follow the native selector/object creation path instead.
+
+The next pass-through build captured `0x400` runtime bytes from each helper while the Client was
+only in orbit. The resolved addresses below are specific to this installed Shadowkeep executable;
+the observer derives them from task 9's checked call instructions instead of hard-coding them.
+
+| Helper | Disassembled native behavior | Direct consequence for Hall |
+| --- | --- | --- |
+| Object-ID source, `0x4AFE80` | Initializes output to `-1`, obtains and validates a current 16-bit registry index, then composes a 32-bit datum ID from the registry row and its generation/configuration fields | Hall's non-`-1` IDs show this stage succeeds; the changing high byte is generation-like while the low 13-bit row index remains stable |
+| Selector, `0x4FFDA0` | Calls `0x4FF9F0`; returns false if that source is null or its first byte is `0xFF`, otherwise writes that signed byte and returns true | Hall's false result is now narrowed to exactly those two source states; Moon's true value `3` is the source byte itself |
+| Selected-object lookup, `0xA55FF0` | Rejects ID `-1`, resolves its low 13-bit primary row, follows a linked handle at primary-row offset `+0x50`, rejects linked ID `-1`, then calls `0xA56460` and returns that result | Hall supplies a valid primary ID, so its null result is narrowed to a missing `+0x50` linked handle or a null result from `0xA56460` |
+
+A paired native pass-through diagnostic then observed `0x4FF9F0`'s pointer/first byte and whether
+the `0xA56460` resolver was reached. The Moon and natural Hall node were loaded in the same process,
+with no task return or helper value changed:
+
+| Native witness | Moon control | Natural Trophy Hall |
+| --- | --- | --- |
+| Type-17 selector source | null, then present with byte `0xFF`, then present with byte `3` | present and readable, but remains byte `0xFF` |
+| Selector result | false until the byte becomes `3`, then true with value `3` | false |
+| Task-9 primary object ID | `0x6BFEC000` in this run | `0x27FEC000` in this run |
+| Linked-object resolver `0xA56460` | initially not reached, then reached and non-null | never reached |
+| Selected object | present, readable, byte `+0x08 = 1` | null |
+| Native task-9 result | `3`, followed by steps 37 and 38 | `1`, remaining at step 36 |
+
+Offline disassembly of `0x4FF9F0` shows that it calls `0x4EA280` with constant selector type 17.
+When the returned handle is valid, it decodes that handle and returns the runtime component record
+at offset `+0x180`; `0x4FFDA0` reads that record's first byte. Hall's `0xFF` is therefore a
+present-but-uncommitted type-17 runtime state, rather than a missing selector source.
+
+The linked-object resolver at `0xA56460` reads a handle at its input row's offset `+0x1D0`, rejects
+`-1`, decodes it, and returns the decoded component address relative to the base at `+0x1D8`.
+Because Hall's primary lookup never calls this resolver, the earlier `0xA55FF0` walk stops first:
+the task-9 primary row's linked handle at `+0x50` is still `-1`. Moon eventually satisfies the
+complete chain.
+
+These two failures move together: Hall neither commits its type-17 runtime byte nor creates the
+primary row's linked object, while Moon does both. The strongest current hypothesis is that Hall's
+167-object, two-group roster transaction is not committing as a unit. This is not proven merely by
+the accepted wire frames. The next clean control therefore withholds only the exact 146-object
+ambient supplement at snapshot time and publishes the unchanged 21-object primary group. Task 9
+and all of its helpers remain native; the extracted build-data cache is left unchanged.
+
+The paired trace is preserved as
+`backups/deployments/tribute-hall-task9-nested-observer-20260816/sunrise-moon-hall-nested-observer.log`
+with SHA-256 `af1426aa61fbdc571ea16a3266bcedbffbb9b932dbb8ac56f9dd462ecd82391d`.
+That deployment's pass-through DLL has SHA-256
+`280ab9ef9ef7664bcf1a2cfe1cb601edc5c9800fcaefe3ca8ca362ed41d487ed`.
+Its selector-source capture has SHA-256
+`a5456a1f423670b92f0ac82e2f25517bc391485c3bf5d18792ff69f51c372b67`; its object-resolver
+capture has SHA-256 `162626b810474016e5e26a8b38a637bbdb407ba25d771912747168ab89a34006`.
+The cache and settings remained unchanged at
+`bead2c68e79cc0facf93527c9d29c190dfe9e552d27f37f041444f39a7966a27` and
+`746ca57fdaa3882b5a79e52eb846091485c22af80be9e01b27c775618af6ba10`, respectively.
+
+The exact one-group control is archived under
+`backups/deployments/tribute-hall-one-group-control-20260816/`. Its deployed DLL has SHA-256
+`f056011a373dba796a16040ef7534dc50a6151ddf4b586a0a9711bd2340051bc`; the native nested-observer
+rollback DLL has SHA-256 `280ab9ef9ef7664bcf1a2cfe1cb601edc5c9800fcaefe3ca8ca362ed41d487ed`.
+The source copy has SHA-256 `91cc6ed744074347b483cd51709822373a8f30c573c804ef15777190538cd96d`.
+The cached build data and settings were copied without modification at the hashes above.
+
+The natural-node test cleanly separated arrival from ambient content. The control published one
+group with 21 objects; its steady roster body was 501 bytes and its state sequence reached 3.
+Task 9 then returned native value 3 with no override: the type-17 selector source was byte 3, the
+linked-object resolver was reached, and the selected object at `0x75FEC000` had byte `+0x08 = 1`.
+Task 10 completed after 1.920 seconds, physics join completed after 6.013 seconds, and the Client
+entered step 38 with full player, camera, and movement control. The door remained closed and no
+statues, dispensers, enemies, or other ambient Hall entities appeared.
+
+This establishes that the 146-object supplemental group is causal to the initial two-group commit
+failure, although it does not yet identify whether size, body semantics, or publication timing is
+the underlying reason. The successful trace is preserved as
+`backups/deployments/tribute-hall-one-group-control-20260816/sunrise-hall-one-group-success.log`
+with SHA-256 `0ef5e457952a7c0962cefedb01919148c58698f4564ec273eba5267c709b250c`.
+The installed DLL, cache, and settings remained at the archived hashes.
+
+The next bounded control uses Sunrise's existing `WorldPhase::arrived` signal. While the Client is
+below step 38 it publishes only the primary group. After step 38, the next ordinary keepalive
+publishes both groups; the existing folded-group comparison advances the roster state byte and the
+existing encoder rollback restores all counters if staging fails. No task return, native helper,
+or extracted cache row is changed. Because a changed roster state rebuilds all roster-owned
+objects, the live test must watch both ambient activation and continued player control.
+
+The staged build is archived under
+`backups/deployments/tribute-hall-staged-ambient-20260816/`. Its deployed DLL has SHA-256
+`998bdf0d4cd117b6227847da1908faae374f6f70e7875c6ece78a463705e6dfa`; the successful one-group
+rollback DLL has SHA-256 `f056011a373dba796a16040ef7534dc50a6151ddf4b586a0a9711bd2340051bc`.
+The exact staged source has SHA-256
+`a4a80665896699ec0989ed692d17712232cb0efd941fc6545a44636e5e32ffdc`. Cache and settings remain
+unchanged at their archived hashes.
+
+The staged live test reached step 38 on the 21-object primary group, then the next ordinary
+keepalive advanced the roster state from 3 to 4 and published both groups with all 167 objects in a
+4,120-byte body. The Client remained controllable and accepted stable repeated state-4 updates.
+Immediately after the handoff it emitted three type-6 `sensor_sense_update` messages with payload
+sizes 1,297, 235, and 276 bytes. No decoder or activity error followed.
+
+The ambient group produced visible but mostly non-functional content: all trophy pedestals appeared,
+green smoke appeared at the Bad Juju shrine, and a purple effect appeared at the door-side location.
+None of those observed elements offered an interaction prompt. The door stayed closed, and the
+vendor, enemies, ammo dispensers, and target-range functionality remained absent. This separates
+package-local arrangement/effect activation from the still-neutral gameplay authority carried by
+slot types 1, 2, 4, 5, 23, and 70.
+The exact trace is preserved as
+`backups/deployments/tribute-hall-staged-ambient-20260816/sunrise-hall-staged-partial-activation.log`
+with SHA-256 `79a518e8f8645d0877e411484fb07a7f390d706d326ce8878898bc08d2e82ef7`.
+
+A later staged-observer run found one hidden urn with an `[E] Inspect` prompt, proving that at least
+one ambient object retained a working proximity and interaction component. Activating it once made
+the urn disappear in a transmat-like effect and immediately emitted one validated type-19 activity
+incident: primary target `3539`, zero extra targets, no compressed selector, and an 82-byte declared
+incident payload. Sunrise currently validates this message but does not relay or act on it, and no
+explicit collectible, lore, triumph, or progression mutation followed in the log. The local visual
+completion is therefore confirmed; an intended lore or account reward remains a hypothesis until
+target row 3539 or the incident payload schema is resolved.
+
+The same run tested whether type-6 `sensor_sense_update` reused type 5's immediate
+`group key -> biased slot type -> biased slot index -> block length` object-reference shape. The
+three messages contained one exact primary-key occurrence and 76 exact ambient-key occurrences,
+but zero candidates passed that full layout and the installed roster bounds. Type 6 therefore uses
+a different field order, grouping, or reference encoding; the failed shape is not suitable for a
+state responder. The exact closed-run trace is preserved as
+`backups/deployments/tribute-hall-sense-shape-observer-20260816/sunrise-hall-sense-shape-urn.log`
+with SHA-256 `bbb83ae0ca5730c2c1548ad585a3c9937a3dd22d0379361e6b4f1283e3348dd2`.
+
+Upstream marks decrypted activity payloads as sensitive and explicitly forbids logging, capturing,
+caching, hashing, or retaining them. The refined observer follows that rule: it scans at most 16
+small type-6 payloads in borrowed memory for only the two already-known Hall roster keys. It reports
+distances between those key matches and accepts a nearby biased type/index candidate only when both
+fields name the same exact slot in Sunrise's immutable extracted Hall roster. It records no payload
+bits or bytes and keeps no payload-derived storage after the call. The observer is isolated in
+`activity_sensor_sense_observer.cpp` and remains temporary research instrumentation.
+
+The observer build is archived under
+`backups/deployments/tribute-hall-sense-shape-observer-20260816/`. The build, installed DLL, and
+archived observer DLL are byte-identical at SHA-256
+`525ecce9c4fb86122e8062ab04823738fbd5e3390f81f323abf05df3ed795eac`. The rollback copy is the
+verified staged-ambient DLL at SHA-256
+`998bdf0d4cd117b6227847da1908faae374f6f70e7875c6ece78a463705e6dfa`. The installed build-data
+cache and settings were not modified and remain at SHA-256
+`bead2c68e79cc0facf93527c9d29c190dfe9e552d27f37f041444f39a7966a27` and
+`746ca57fdaa3882b5a79e52eb846091485c22af80be9e01b27c775618af6ba10`, respectively.
+
+The refined coordinate observer is archived under
+`backups/deployments/tribute-hall-sense-coordinate-observer-20260816/`. The build, installed DLL,
+and archived deployment are byte-identical at SHA-256
+`6e7f440b4ce24c097b6be19e2af4a88518dc3a20e9bcfdda26eb81fdfa1ae478`. Its immediate rollback is
+the tested shape-and-urn observer at SHA-256
+`525ecce9c4fb86122e8062ab04823738fbd5e3390f81f323abf05df3ed795eac`; the earlier staged-only
+rollback remains archived separately. Cache and settings remain unchanged at the hashes above.
+
+The refined live run reached step 38 naturally, staged both groups at state 4, retained player
+control, and reproduced the pedestals plus green and purple effects. Its three type-6 messages were
+1,326, 235, and 235 bytes. Exact-roster validation found 51, 10, and 10 object coordinates,
+respectively; 61 slots were unique across the run: all 16 type-1 slots, 29 of 47 type-4 slots, and
+16 of 20 type-23 slots. No type-2 or type-70 coordinate appeared.
+
+Every genuine object coordinate put the biased type at exactly `group_key_bit + 32` and the biased
+index immediately after it. The prior parser therefore had the correct identity prefix and failed
+only because type 6 does not carry type 5's 32-bit block length there. A group header key was 65
+bits before its first object key, matching `key + 32-bit filler + one continuation bit`. For
+non-final records, subtracting the 55-bit key/type/index identity and the next continuation bit from
+the next-key distance gives observed sense-body lengths: type 4 was 165 bits, type 23 was 167 bits,
+and type 1 used 56-, 85-, and 92-bit forms. These are observed variants, not yet promoted to
+complete schema rules. The broader nearby scan also produced one `+97` duplicate for each first
+object by seeing the next record's identity; only `+32` coordinates are genuine.
+
+The exact successful trace is preserved as
+`backups/deployments/tribute-hall-sense-coordinate-observer-20260816/sunrise-hall-sense-coordinate-success.log`
+with SHA-256 `eecaa8b2c129249f4efba27cb85e5b4cdf0c2461866fb1814f0d6d11924b175c`.
+
+An upstream-first check found official Sunrise still at tag `0.2.1` / commit
+`b12a9dab780f47c89f1c147d4a8ef3ddbc839734`; its type-6 path remains an accepted one-way no-op.
+The current Linux-fork head adds no later sensor or entity-authority implementation, and exact
+public-source searches for the three sense schema ids found no protocol definition. The next local
+step therefore remains temporary framing research rather than a guessed responder.
+
+The exact record framer removes the broad neighboring-bit search. It accepts an object only when
+the fields exactly 32 bits after a known group key name the same slot in the immutable installed
+roster. A sense-body endpoint is reported only when the immediately following known key is another
+validated object in the same group; one continuation bit is removed from that gap. Final objects
+remain explicitly unframed. It classifies the previously observed type-1, type-4, and type-23 body
+widths but does not decode, retain, or report body data and does not change activity state.
+
+The framer is archived under
+`backups/deployments/tribute-hall-sense-record-framer-20260816/`. The build, installed DLL, and
+archived deployment are byte-identical at SHA-256
+`21f4eb8eee69a8ddbaa2d534c69f8bf00957e2b4eb83f7b4205868b52d970363`. Its immediate rollback is
+the successful coordinate observer at SHA-256
+`6e7f440b4ce24c097b6be19e2af4a88518dc3a20e9bcfdda26eb81fdfa1ae478`. Cache and settings remain
+unchanged at the hashes above.
+
+The bounded live test reached task 9's native return 3 and world step 38 without forcing either
+result. After arrival, the normal staged publication advanced to state 4 with both groups and all
+167 objects. The Client accepted all three type-6 messages, normal keepalives continued, and the
+user confirmed full player control plus the previously established ambient presentation: trophy
+pedestals, green Bad Juju-shrine smoke, and the purple door-side effect. No new Hall behavior was
+introduced by the observer.
+
+| Message | Bytes | Exact objects | Framed | Known body variants | Group headers | Deliberately unframed tail |
+| ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | 1,297 | 50 | 49 | 49 | 1 | type 4, index 88; 172 bits remain |
+| 2 | 276 | 12 | 11 | 11 | 1 | type 23, index 72; 170 bits remain |
+| 3 | 235 | 10 | 9 | 9 | 1 | type 23, index 64; 177 bits remain |
+
+All 69 records with a following exact object boundary matched an already observed body width. Each
+message contained exactly one validated group header and exactly one final object that the framer
+left unresolved by design. The final type-4 remainder is seven bits longer than its observed
+165-bit body; the final type-23 remainders are three and ten bits longer than its observed 167-bit
+body. That variation is consistent with message-footer and byte-alignment effects, but it does not
+identify their schema. Final-record endpoints must therefore remain unresolved until the footer is
+understood.
+
+The exact closed-run trace is preserved as
+`backups/deployments/tribute-hall-sense-record-framer-20260816/sunrise-hall-sense-record-framer-success.log`
+with SHA-256 `e36cf5a86270fa4ea3d262c6690f7d083ae2c511fd29bfcfe32400893285e9c8`.
+The installed build-data cache and settings remained unchanged at SHA-256
+`bead2c68e79cc0facf93527c9d29c190dfe9e552d27f37f041444f39a7966a27` and
+`746ca57fdaa3882b5a79e52eb846091485c22af80be9e01b27c775618af6ba10`, respectively.
+
+### Sensor-sense native schema registry
+
+The next orbit-only inspection read the Client's native schema registry directly from borrowed
+process memory. It did not attach a debugger, pause or write to the process, and it did not read,
+copy, hash, log, or retain any activity-message payload. These structures are reverse-engineering
+evidence outside the official Sunrise guide. Runtime metadata addresses below identify this one
+ASLR-dependent run and are not stable integration constants.
+
+| Slot type | Sense schema | Runtime metadata | Size | Fields | Recovered status |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | `0x80807ECC` | `0x6FFFF8A6C9D0` | `0x288` | 13 | Complete outer and nested field shapes |
+| 4 | `0x8080992E` | `0x6FFFF8977E70` | `0x170` | 6 | Complete through the outer `kind 0x22` boundary |
+| 23 | `0x80804F47` | `0x6FFFF899F550` | `0x170` | 6 | Complete outer field shape |
+
+Ordinary metadata stores the field count at `+0x60`, schema id at `+0x68`, and its first
+`0x28`-byte field descriptor at `+0x80`. Two wrapper schemas instead use `+0x68`, `+0x70`, and
+`+0x88`. Descriptor word 4 is the field kind and word 5 is the nested schema id when present;
+adding `0x100` to a kind marks the field optional. Bias and encoded width were read from the later
+descriptor words and cross-checked against the already recovered auth encoders.
+
+| Type | Native field order |
+| ---: | --- |
+| 1 | optional widths `31, 31, 31, 6, 7, 31`; fixed widths `2, 3, 1, 1, 1`; optional `0x80807ECF`; optional `0x80807ECD` |
+| 4 | signed 32; bool; bool; signed 32; nested `0x80809E1B`; nested wrapper `0x80809AEA` |
+| 23 | six optional 32-bit fields, alternating `kind 0x0B` and signed `kind 0x05` |
+
+| Nested schema | Runtime metadata | Recovered shape |
+| ---: | ---: | --- |
+| `0x80807ECF` | `0x6FFFF8A71668` | wrapper: fixed width 4, then `0x80809491` |
+| `0x80809491` | `0x6FFFF8A1F708` | one signed 32-bit field |
+| `0x80807ECD` | `0x6FFFF8A1E8D0` | one optional width-7 field |
+| `0x80809E1B` | `0x6FFFF8A20060` | one 32-bit `kind 0x09` field |
+| `0x80809AEA` | `0x6FFFF8A63550` | wrapper: fixed width 2, then `0x80809AE8` |
+| `0x80809AE8` | `0x6FFFF8A59240` | one polymorphic `kind 0x22` field |
+
+The isolated validator in `activity_sensor_sense_schema_validator.cpp` only advances a bounded
+MSB-first cursor over borrowed storage. It emits a structural verdict and no field values or
+presence pattern. Type 1 and type 23 are eligible for `exact`; type 4 is eligible only for
+`partial_kind22` when its present dynamic branch has the observed 63 remaining bits. An absent
+type-4 dynamic branch may validate exactly, but the observed 165-bit form cannot be promoted beyond
+partial until the branch schema is recovered. The one-bit record wrapper and the resulting live
+alignment still require a Hall trace; a zero-mismatch result has not yet been claimed.
+
+Synthetic-only checks exercised all three observed type-1 widths, the 167-bit type-23 shape, both
+type-4 outer branches, truncated-body rejection, unsupported types, and a non-byte-aligned record
+start. They passed before deployment and used invented bit patterns rather than captured activity
+data. The validator build is archived under
+`backups/deployments/tribute-hall-sense-schema-validator-20260816/`. The build, installed DLL, and
+archived deployment are byte-identical at SHA-256
+`0cd07f5c22848f4a89e5653d3142b527ba6908673d6d46ba69c6ebd97ce45177`. Its immediate rollback is
+the successful record framer at SHA-256
+`21f4eb8eee69a8ddbaa2d534c69f8bf00957e2b4eb83f7b4205868b52d970363`. The installed build-data
+cache and settings were not modified and remain at SHA-256
+`bead2c68e79cc0facf93527c9d29c190dfe9e552d27f37f041444f39a7966a27` and
+`746ca57fdaa3882b5a79e52eb846091485c22af80be9e01b27c775618af6ba10`, respectively.
+
+The first live validator run preserved normal Hall behavior and all 69 known record lengths, but
+reported 69 schema mismatches: 49 in message 1, 9 in message 2, and 11 in message 3. The failure was
+uniform across types 1, 4, and 23, while Sunrise's existing parser confirmed that a set presence
+bit means present. The common leading-wrapper hypothesis was therefore rejected. The payload-safe
+trace is archived as
+`backups/deployments/tribute-hall-sense-schema-validator-20260816/sunrise-hall-leading-wrapper-mismatch.log`
+with SHA-256 `3b990bd6110117a14b51244b80b318373d508632ce68528b65d3962ced4512eb`.
+
+Each observed body remains exactly one bit longer than its recovered native schema: type 23 is
+`6 + (5 * 32) + 1 = 167` bits, and the same placement makes the three type-1 variants 56, 85, and
+92 bits. The corrected validator now parses the native schema first and consumes the shared opaque
+record bit last. Type 4 likewise treats its 63-bit unresolved dynamic branch as preceding that
+trailer. The corrected synthetic suite passed before deployment. This build is archived under
+`backups/deployments/tribute-hall-sense-schema-validator-trailer-20260816/`; the build, installed
+DLL, and archived DLL are byte-identical at SHA-256
+`f1c85ba0313f8a811cac31351d850a9f16d8b8443be603e2f2f7007312aa88f3`. The failed leading-wrapper
+build remains available at SHA-256
+`0cd07f5c22848f4a89e5653d3142b527ba6908673d6d46ba69c6ebd97ce45177`, and the known-good framer
+rollback remains `21f4eb8eee69a8ddbaa2d534c69f8bf00957e2b4eb83f7b4205868b52d970363`.
+
+The corrected trailing-bit run also preserved normal behavior and all known widths, but all 68
+framed records again mismatched: 50, 9, and 9 across its three messages. That rejects both simple
+inline layouts. Its payload-safe trace is archived as
+`backups/deployments/tribute-hall-sense-schema-validator-trailer-20260816/sunrise-hall-trailing-wrapper-mismatch.log`
+with SHA-256 `41a012aeb6ccb89a463f314d363e1b96837a52151f31c87ca5af61585528adf2`.
+
+The next bounded hypothesis groups a schema's optional-field markers before its present values.
+Type 23 gives the strongest arithmetic evidence: one opaque record bit, six grouped markers, and
+five 32-bit values total exactly 167 bits. The new validator independently tests the record bit
+before the map and after the mapped values. It reports only `exact_prefix_map`,
+`exact_trailer_map`, `exact_ambiguous_map`, or `mismatch`; neither the map nor any value leaves the
+call. Type 1 applies the same grouping to its eight optional top-level fields and keeps the nested
+single optional marker inside its nested value. Type 4 is now deliberately only partial: it checks
+the 100 recovered fixed-width bits leave 65 opaque bits and makes no ordering or value claim about
+the record bit and kind-`0x22` state.
+
+Both map placements, ambiguity, truncation, arbitrary starting offsets, and all observed widths
+passed synthetic-only tests before deployment. The experiment is archived under
+`backups/deployments/tribute-hall-sense-schema-presence-map-20260816/`. The build, installed DLL,
+and archived DLL are byte-identical at SHA-256
+`76b0ac3b51f37b0506eb629abd1ed61d38bf797d6631d36d5f75b1a1bac826dd`; cache and settings remain
+unchanged at their hashes above. The immediate rollback is the trailing-wrapper build at SHA-256
+`f1c85ba0313f8a811cac31351d850a9f16d8b8443be603e2f2f7007312aa88f3`, with the record-framer
+rollback retained separately.
+
+The successful Moon control trace is preserved as
+`backups/deployments/tribute-hall-task9-origin-20260816/sunrise-moon-task9-origin.log` with SHA-256
+`b3351bc22a27fede6037e069887e705a94e3aa23f0e71bc960eed8cf229f91db`.
+The corrected full-mask control is preserved as
+`backups/deployments/tribute-hall-full-task-masks-20260816/sunrise-moon-full-task-masks.log` with
+SHA-256 `bb4d007ac459200b3c89dbd9500a31e7b9fd740bc95b398606b385c10b826655`.
+The paired Hall trace is preserved as
+`backups/deployments/tribute-hall-full-task-masks-20260816/sunrise-hall-full-task-masks.log` with
+SHA-256 `ddb7f3af0c64ab0e99e96159d4804e5b3f076e4c5fa4e2c269111538738e516f`.
+The successful task-9 gate control is preserved as
+`backups/deployments/tribute-hall-task9-gates-20260816/sunrise-moon-task9-gates.log` with SHA-256
+`6b9815992d6c24271ab898df4c1f42dfda16b1a3f1c43fa4240da25e2776fdaf`.
+The false-selector noise correction was deployed from DLL SHA-256
+`d9e24561daaa7af7936fcd30643414691611957be1eb96a46bd117ae07cbea39`; its rollback set is
+`backups/deployments/tribute-hall-task9-gates-v2-20260816/`. The cache and settings were not
+changed by that deployment.
+The natural Hall-node trace is preserved as
+`backups/deployments/tribute-hall-task9-selector3-20260816/sunrise-hall-natural-node.log` with
+SHA-256 `40e2c88f28c3564910c42bb6a4ebc3eba442f581a97da7c7bd781e188555a45e`.
+The temporary selector experiment has DLL SHA-256
+`5fbbb5e12f43da5ccf0197388418f88931c35e035c4915755aae5e31a7ce19ac`; its complete rollback
+set and exact experimental source are in
+`backups/deployments/tribute-hall-task9-selector3-20260816/`.
+Its completed Hall trace is preserved there as `sunrise-hall-selector3.log` with SHA-256
+`fa160c4bc6f7cefed08d634a997cabf24cbc7a1e5ab8b6c79c921ea7c9122c3b`.
+The first bounded task-9 completion experiment has DLL SHA-256
+`d2adeade44e7bab4af1971c1f1e73761ff0a85747d3104576fd8a8eb23971278`. Its completed trace is
+`backups/deployments/tribute-hall-task9-return3-20260816/sunrise-hall-return3.log` with SHA-256
+`cb9e88652edd158e39af8e675f824ef5bc073cf6bf92fd37d073d3fe7f234f12`. The same folder retains
+the exact source, rollback DLL, and the first `0x240` bytes of the unpacked callback; that binary has
+SHA-256 `06c195618add8f59861c1918a3d4f256eea8f94e00bd90948e4ad8a105c9aa46`.
+The follow-up build changes only the startup capture length to the callback's full `0x290` bytes;
+its DLL SHA-256 is `009c90a8355b53c1c2291618b70569726a9e5a8f704b942db4370fa45655311a`.
+The three-spawn black-screen trace is preserved as
+`backups/deployments/tribute-hall-task9-return3-20260816/sunrise-hall-return3-multi-spawn-black.log`
+with SHA-256 `2e06e484f7c18b95494800eaabcedd8a4d7f139d75f58de674982b26e998d1e1`.
+The reconstructed full callback is preserved alongside it as
+`task_nine_unpacked-full-0x290.bin`; it is exactly 656 bytes and has SHA-256
+`7aa0aaa1f44b591f8c13390742271cb79080d58b524c31e937ca3d622f96eb42`.
+The native pass-through helper-capture DLL has SHA-256
+`95bce94dbdb23a30bd939c20959ee9e7cafe3e7a9217b65428b065fdd44a2ec4`; its exact source,
+rollback DLL, and evidence are in
+`backups/deployments/tribute-hall-task9-helper-capture-20260816/`. The orbit trace has SHA-256
+`11809354e5883dabc12b070c3506ebe211cfc2878319dd414b7df959130a15cd`. The three reconstructed
+`0x400`-byte binaries have SHA-256 values
+`5a6b56bc09db5805aaf3ab13fa3fc52a3cd52363ce131ff38d09f37aabc51eaf` (object-ID source),
+`cee3d32f65eb0115355f0767f6a5f3245d49ac6616451494cf7785b0b81a6930` (selector), and
+`6aaa0e09bd0cd3549bc2bd4d0efab60018d91af072f19af8f04d2605a4f8e215` (object lookup).
+
 The Hall publishes roster key `0x4786C0E0` from placed object `0x80FEB3DC`. Its 21 slots are:
 
 | Slot type | Count | Component class | Sense schema | Auth schema | Current Sunrise body |
@@ -251,6 +780,72 @@ The Hall publishes roster key `0x4786C0E0` from placed object `0x80FEB3DC`. Its 
 | 18 | 1 | `0x80809917` | absent | `0x80809919` | Native-derived neutral body implemented in source |
 | 35 | 1 | `0x808099BD` | absent | `0x808099BF` | Native-derived neutral body implemented in source |
 | 41 | 1 | `0x80804EE6` | `0x80804EE8` | `0x80804EE9` | Queue state; neutral body implemented |
+
+The scenario registry also contains the package-owned ambient Hall group at placed object
+`0x815BA505`, key `0xF18B720F`. Its 146-slot layout is distinct from the 21-slot global activity
+group:
+
+| Slot type | Count | Component class | Sense schema | Auth schema | Published flags/body |
+| ---: | ---: | --- | --- | --- | --- |
+| 1 | 16 | `0x80809A3B` | `0x80807ECC` | `0x80807EC9` | sense + auth; neutral body implemented |
+| 2 | 16 | `0x8080834E` | `0x80807DA2` | `0x80807DA1` | sense + auth; neutral body implemented |
+| 4 | 47 | `0x80809927` | `0x8080992E` | `0x8080992F` | sense + auth; native-derived neutral body implemented |
+| 5 | 1 | `0x80804F01` | absent | `0x80804F04` | auth; neutral body implemented |
+| 23 | 20 | `0x80804F45` | `0x80804F47` | `0x80804F48` | sense + auth; neutral body implemented |
+| 47 | 1 | no descriptor | absent | absent | local; no network block |
+| 60 | 1 | no descriptor | absent | absent | local; no network block |
+| 61 | 26 | no descriptor | absent | absent | local; no network block |
+| 66 | 16 | `0x808094CF` | absent | absent | local; no network block |
+| 70 | 1 | `0x808094EE` | `0x808094F0` | `0x808094F1` | sense + auth; neutral body implemented |
+| 72 | 1 | no descriptor | absent | absent | local; no network block |
+
+The source-only Hall supplement preserves the original general-purpose roster filter. It admits
+this additional group only when all of the following still match: destination
+`trophy_hall_freeroam`, registry key `0xF18B720F`, total count 146, and every per-type count in the
+table above. The exact presence flags are then applied without walking the group's 120 descriptor
+handles during cache extraction. This keeps the operation within the ordinary extraction budget;
+any package-layout drift drops the supplemental group instead of guessing.
+
+Only the ambient key receives this allowance. The other secondary registry groups, including the
+Bad Juju mission groups, remain excluded. The encoder emits native-derived neutral bodies for slot
+types 1, 2, 4, 5, 23, and 70. Type 4 was added only after tracing its kind-`0x0D` and
+kind-`0x22` runtime decoders; it no longer relies on a guessed payload.
+
+The first live test proved cache extraction and wire framing, but not a usable ambient state. The
+Client accepted repeated two-group updates containing all 167 objects, then completed the Hall
+region's precache and instantiation passes. Immediately after opcode 2100 reported region/key
+`0xF18B720F`, the world-controller job remained stalled in `activity:initial_slice_set_loading` and
+hit the diagnostic assertion cap of 200. The process stayed alive but made no further log progress.
+The failed DLL, cache, and log were preserved, and the installed DLL/cache were restored to their
+previous working hashes. The supplemental source remains uncommitted until the required auth state
+is understood.
+
+The second live test added the five fully decoded neutral bodies for slot types 1, 2, 5, 23, and
+70. The steady roster message grew from 2,158 to 2,633 bytes, and the Client continued accepting
+all 167 objects without a framing or decoder error. It again completed Hall precache and
+instantiation, received opcode 2100 for `0xF18B720F`, then remained in
+`activity:initial_slice_set_loading` until the five-second prologue-filler timeout. This proves the
+five bodies are wire-valid but not sufficient to release the Hall. Type 4 is the only ambient slot
+type that both requests auth state and still lacks a body; its 47 instances are therefore the next
+bounded research target. The failed DLL, cache, and log were preserved separately, and no live
+behavior from this test is committed as working functionality.
+
+The third live test added the exact 253-bit type-4 body to all 47 instances. The steady roster
+message grew from 2,633 to 4,120 bytes: the 1,487-byte increase exactly matches 47 times 253 bits
+after whole-message byte rounding. The Client accepted every update with no framing or decoder
+error. It completed the Hall region's precache and instantiation passes and reported opcode 2100
+for `0xF18B720F`, but it again hit the five-second prologue-filler timeout and remained in
+`activity:initial_slice_set_loading` while normal keepalives continued. This proves the type-4
+body is wire-valid but also proves that complete neutral auth-body coverage does not release the
+Hall. The next target is the separate activity/prologue readiness state, not additional guessed
+type-4 bits.
+
+The tested DLL (`3baa9a6f0200215b71fc9e33406ece858e2b9d47d3e6f7a74b065d3f7317ed53`)
+and live log (`e51dfa3aead997c632c843098365595f138092653bcf6bf80b0383f4a2404e9b`)
+are preserved under `backups/deployments/tribute-hall-type4-v3-20260816`. The installed DLL was
+restored to the prior hash
+`3fe02b5d94c71c4b1784656f4ff824d4e37712fab6db535da381c40926552e81`; the cache remained
+unchanged at `bead2c68e79cc0facf93527c9d29c190dfe9e552d27f37f041444f39a7966a27`.
 
 A bounded fresh-boot diagnostic recorded the first component/sense/auth tuple for every observed
 slot type and at most one conflict per type. It found no conflicts anywhere in the scanned package
@@ -265,13 +860,29 @@ top-level fields are optional and absent.
 
 | Auth schema | Native field order | Exact width | Neutral wire values |
 | --- | --- | ---: | --- |
+| `0x80807EC9` | 18 optional fields, biased 2-bit value, biased 3-bit value, optional u32 | 24 bits | optionals absent; biased values one |
+| `0x80807DA1` | optional i32, biased 2-bit value, biased 3-bit value, bool, four optional records | 11 bits | optionals absent; biased values one; bool zero |
+| `0x80809C42` | u32, biased 7-bit value, signed i16 | 55 bits | zero, one, signed-zero bias `0x8000` |
+| `0x80804F04` | two u64s, u8, nested u32 + `0x80809C42`, `0x80809C42` | 278 bits | unsigned values zero; nested biased values as above |
+| `0x80804F48` | three u32/signed-i16/bool tuples | 147 bits | u32 and bool zero; i16 bias `0x8000` |
+| `0x808094F1` | u5, optional record, signed i16, optional record | 23 bits | u5 zero; optionals absent; i16 bias `0x8000` |
+| `0x8080992F` | three signed i32s, two bools, `0x80809C42`, kind `0x0D`, bool, `0x80809AEA` | 253 bits | signed-zero biases; bools zero; neutral nested record; raw quaternion xyz zero; unbiased u2 zero; polymorphic tail absent |
 | `0x808099C4` | bool, five unsigned 64-bit values, unsigned 32-bit value | 353 bits | all zero |
 | `0x80809919` | `0x808099C4`, bool, signed 32-bit value | 386 bits | shared record zero, bool zero, signed-zero bias `0x80000000` |
 | `0x808099BF` | two bools, two biased 2-bit values, `0x808099C4` | 359 bits | bools zero, 2-bit values one, shared record zero |
 
+The runtime field-kind dispatch table proves the two formerly unresolved type-4 encodings.
+Kind `0x0D` checks a global compression-mode byte; that byte is zero in this Shadowkeep runtime,
+so the decoder reads three raw 32-bit float values for quaternion x/y/z and synthesizes w=1.
+Kind `0x22` first decodes schema `0x80800046`, whose sole kind-`0x17` field is a presence bit:
+zero stores `-1`, after which kind `0x22` omits its second, polymorphic-object decode. The
+neutral kind-`0x22` tail is therefore exactly one clear bit. Descriptor inspection also proves
+that `0x80809AEA`'s preceding two-bit value has bias zero, so its neutral wire value is zero.
+
 The source now emits these exact neutral bodies through the general slot-type encoder. It does not
-add a Hall-specific client hook. The build succeeds, but it remains source-only until the current
-game session closes and the DLL can be deployed safely.
+add a Hall-specific client hook. All six ambient auth bodies, including the 253-bit type-4 body,
+passed bounded live wire tests. The complete ambient-Hall change remains experimental and
+uncommitted because valid neutral roster state still does not release the Hall's prologue gate.
 
 ## Complete observed slot inventory
 

@@ -1,3 +1,5 @@
+#include <array>
+
 #include "../../../middleware/content/packages/tables/roster_intersection.h"
 #include "../../../middleware/content/packages/tables/scenario_reader.h"
 #include "../../../middleware/content/packages/tables/slot_descriptor_reader.h"
@@ -10,6 +12,29 @@ namespace tables = middleware::content::packages::tables;
 
 /** How many hops the chain from a handle to a descriptor blob may take. */
 constexpr std::size_t kChainDepthLimit = 8;
+
+/** Exact ambient-Hall layout captured from the installed Shadowkeep package set. */
+constexpr std::uint16_t kTrophyHallAmbientSlotCount = 146;
+
+struct TrophyHallSlotFlags {
+    std::uint8_t type{};
+    std::uint8_t flags{};
+    std::uint16_t count{};
+};
+
+constexpr std::array<TrophyHallSlotFlags, 11> kTrophyHallAmbientFlags = {{
+    {1, layouts::kSlotAuthFlag | layouts::kSlotSenseFlag, 16},
+    {2, layouts::kSlotAuthFlag | layouts::kSlotSenseFlag, 16},
+    {4, layouts::kSlotAuthFlag | layouts::kSlotSenseFlag, 47},
+    {5, layouts::kSlotAuthFlag, 1},
+    {23, layouts::kSlotAuthFlag | layouts::kSlotSenseFlag, 20},
+    {47, 0, 1},
+    {60, 0, 1},
+    {61, 0, 26},
+    {66, 0, 16},
+    {70, layouts::kSlotAuthFlag | layouts::kSlotSenseFlag, 1},
+    {72, 0, 1},
+}};
 
 /**
  * Records one descriptor's schemas against its slot type.
@@ -138,6 +163,39 @@ void resolve_flags(const reader::Source& source,
     return true;
 }
 
+/**
+ * Applies captured reset-presence flags only when the complete ambient-Hall layout still matches.
+ * @param group Candidate group whose slot types are already filled.
+ * @return True when every slot type and count matches the captured 146-slot layout.
+ */
+[[nodiscard]] bool fill_trophy_hall_flags(layouts::RosterGroup& group) noexcept {
+    if (group.registryKey != kTrophyHallAmbientKey
+        || group.slotCount != kTrophyHallAmbientSlotCount) {
+        return false;
+    }
+    std::array<std::uint16_t, kTrophyHallAmbientFlags.size()> counts{};
+    for (std::size_t slot = 0; slot < group.slotCount; ++slot) {
+        bool matched = false;
+        for (std::size_t row = 0; row < kTrophyHallAmbientFlags.size(); ++row) {
+            if (group.slotTypes[slot] == kTrophyHallAmbientFlags[row].type) {
+                group.slotFlags[slot] = kTrophyHallAmbientFlags[row].flags;
+                ++counts[row];
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) {
+            return false;
+        }
+    }
+    for (std::size_t row = 0; row < kTrophyHallAmbientFlags.size(); ++row) {
+        if (counts[row] != kTrophyHallAmbientFlags[row].count) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /** @param storage Working storage. @param tag Object tag. @return Its memo slot, or capacity. */
 [[nodiscard]] std::size_t memo_slot(const RosterStorage& storage, std::uint32_t tag) noexcept {
     std::size_t probe = tag % kObjectMemoCapacity;
@@ -178,26 +236,37 @@ bool resolve_object(const reader::Source& source,
     storage.memo[slot].tag = objectTag;
     storage.memo[slot].group = kNotARosterGroup;
     ++storage.reads;
-    if (!reader::read_tag(source, scratch, objectTag, storage.object)
-        || !tables::carries_roster_slot(storage.object)) {
+    if (!reader::read_tag(source, scratch, objectTag, storage.object)) {
         return true;
     }
 
     layouts::RosterGroup candidate{};
-    if (!tables::object_key(storage.object, candidate.registryKey) || candidate.registryKey == 0
-        || !fill_slots(storage.object, candidate)) {
+    if (!tables::object_key(storage.object, candidate.registryKey) || candidate.registryKey == 0) {
+        return true;
+    }
+    const bool baseline = tables::carries_roster_slot(storage.object);
+    const bool supplement = candidate.registryKey == kTrophyHallAmbientKey
+                            && tables::carries_supplemental_roster_slot(storage.object);
+    if ((!baseline && !supplement) || !fill_slots(storage.object, candidate)) {
         return true;
     }
     candidate.objectTag = objectTag;
-    resolve_flags(source, scratch, storage, storage.object, candidate);
-    if (!flags_complete(storage, candidate)) {
-        // A slot whose flags are unknown would be encoded with the wrong reset bits, and phase 2
-        // has no resync point, so the whole group is dropped instead.
-        ++storage.unresolvedGroups;
-        return true;
-    }
-    for (std::size_t index = 0; index < candidate.slotCount; ++index) {
-        candidate.slotFlags[index] = storage.slotFlags[candidate.slotTypes[index]];
+    if (supplement) {
+        if (!fill_trophy_hall_flags(candidate)) {
+            ++storage.unresolvedGroups;
+            return true;
+        }
+    } else {
+        resolve_flags(source, scratch, storage, storage.object, candidate);
+        if (!flags_complete(storage, candidate)) {
+            // A slot whose flags are unknown would be encoded with the wrong reset bits, and phase
+            // 2 has no resync point, so the whole group is dropped instead.
+            ++storage.unresolvedGroups;
+            return true;
+        }
+        for (std::size_t index = 0; index < candidate.slotCount; ++index) {
+            candidate.slotFlags[index] = storage.slotFlags[candidate.slotTypes[index]];
+        }
     }
     // One key may carry different layouts in different activities, so only exact layouts reuse.
     for (std::size_t index = 0; index < storage.groupCount; ++index) {

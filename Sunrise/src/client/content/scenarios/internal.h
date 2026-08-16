@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string_view>
 #include <vector>
 
 #include "../../../middleware/content/packages/reader/reader.h"
@@ -14,6 +15,10 @@ namespace sunrise::client::content::scenarios {
 
 namespace layouts = state::build_data::scenarios;
 namespace reader = middleware::content::packages::reader;
+
+/** Captured supplemental group containing the package-owned ambient Trophy Hall state. */
+inline constexpr std::string_view kTrophyHallDestination = "trophy_hall_freeroam";
+inline constexpr std::uint32_t kTrophyHallAmbientKey = 0xF18B720FU;
 
 /**
  * Placed-object tags the memo holds. The walk reaches 5,826 distinct objects over the installed
@@ -141,6 +146,8 @@ struct Candidate {
     bool bindsPlayer{};
     bool reportsLifetime{};
     bool primaryRegistry{};
+    /** True when the object matched the original general-purpose roster filter. */
+    bool baselineRoster{};
 };
 
 /** @return True when both groups carry the same registry key and full wire slot layout. */

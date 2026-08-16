@@ -77,6 +77,8 @@ void note_candidate(Walk& walk,
             candidate.bindsPlayer || row.slotTypes[slot] == kSlotTypeParticipation;
         candidate.reportsLifetime =
             candidate.reportsLifetime || row.slotTypes[slot] == kSlotTypeLifetime;
+        candidate.baselineRoster =
+            candidate.baselineRoster || tables::is_baseline_roster_slot(row.slotTypes[slot]);
     }
 }
 

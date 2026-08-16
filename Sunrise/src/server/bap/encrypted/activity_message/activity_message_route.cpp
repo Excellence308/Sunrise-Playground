@@ -19,6 +19,7 @@
 #include "../../../../middleware/bap/activity_message/entity_slots.h"
 #include "../../../../middleware/bap/activity_message/incident.h"
 #include "../../../../state/activity/runtime.h"
+#include "activity_sensor_sense_observer.h"
 #include "membership/activity_membership_route.h"
 #include "middleware/bap/activity_message/activity_entity_slot_request_parser.h"
 #include "patch_epoch/activity_patch_epoch_route.h"
@@ -46,7 +47,7 @@ struct AcceptedMessage {
  * contract. The names are the binary's own, so a log line says what arrived.
  */
 constexpr std::array<AcceptedMessage, 14> kAcceptedMessages{{
-    {6, "sensor_sense_update"},
+    {kSensorSenseMessageType, "sensor_sense_update"},
     {8, "request_activity_host"},
     {11, "start_new_activity"},
     {13, "request_peer_reservation"},
@@ -378,6 +379,9 @@ bool process(std::uint64_t boundSessionId,
         return true;
     } else if (const char* name = accepted_name(request.messageType); name != nullptr) {
         // One-way with nothing to change here. Accepting is the whole contract.
+        if (request.messageType == kSensorSenseMessageType) {
+            observe_sensor_sense_structure(request.payload);
+        }
         report_accepted(request.messageType, name, request.payload.size());
         return true;
     } else {

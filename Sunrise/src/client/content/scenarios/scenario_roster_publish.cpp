@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cstddef>
+#include <string_view>
 
 #include "../../../middleware/content/packages/tables/roster_intersection.h"
 #include "internal.h"
@@ -8,6 +9,13 @@ namespace sunrise::client::content::scenarios {
 namespace {
 
 namespace tables = middleware::content::packages::tables;
+
+/** @return True only for the captured supplemental group of the installed Trophy Hall scenario. */
+[[nodiscard]] bool is_allowed_supplement(const Candidate& candidate,
+                                         const layouts::Definition& row) noexcept {
+    const std::string_view destination{row.name.data(), row.nameLength};
+    return destination == kTrophyHallDestination && candidate.key == kTrophyHallAmbientKey;
+}
 
 /**
  * Orders the safe groups the way the destination publishes them.
@@ -47,7 +55,9 @@ void publish_safe(Walk& walk, layouts::Definition& row) noexcept {
     for (std::size_t index = 0; index < walk.candidateCount; ++index) {
         const Candidate& candidate = walk.candidates[index];
         const auto last = safe.begin() + static_cast<std::ptrdiff_t>(safeCount);
-        if (std::find(safe.begin(), last, candidate.key) != last && keptCount < kept.size()) {
+        const bool publishable = candidate.baselineRoster || is_allowed_supplement(candidate, row);
+        if (publishable && std::find(safe.begin(), last, candidate.key) != last
+            && keptCount < kept.size()) {
             kept[keptCount++] = candidate;
         }
     }
