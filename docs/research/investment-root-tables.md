@@ -721,6 +721,34 @@ unchanged at their hashes above. The immediate rollback is the trailing-wrapper 
 `f1c85ba0313f8a811cac31351d850a9f16d8b8443be603e2f2f7007312aa88f3`, with the record-framer
 rollback retained separately.
 
+The live grouped-presence run preserved normal behavior but rejected that hypothesis. Across 69
+framed records it produced no exact schema matches: type 1 supplied 27 mismatches, type 23 supplied
+14 mismatches, and all 28 type-4 records retained the deliberately partial `kind22` result. By
+message, ordinal 1 contained 49 framed objects (`0` exact, `28` partial, `21` mismatch), ordinal 2
+contained 9 (`0`, `0`, `9`), and ordinal 3 contained 11 (`0`, `0`, `11`). Three final records were
+unframed and therefore not validated. The payload-safe trace is archived as
+`backups/deployments/tribute-hall-sense-schema-presence-map-20260816/presence-map-run.log` with
+SHA-256 `43308baa26ca7aa2dda9580a6194d0f589dee2d932bfc53ebc5943b7e1626109`.
+
+The next diagnostic changes only the type-23 interpretation. It tests the seven possible
+locations of the single unexplained bit around six inline optional 32-bit fields: before field 0,
+between each adjacent pair, and after field 5. Each framed type-23 record reports one seven-bit
+structural-match mask. The skipped bit, the six presence bits, and all field values remain borrowed
+and are never logged, copied, hashed, or retained. Type 1 and the deliberately partial type-4
+validator remain unchanged so the experiment isolates one hypothesis.
+
+All seven intended positions, arbitrary non-byte-aligned starts, truncation rejection, deliberate
+ambiguity, and the unchanged type-1/type-4 paths passed synthetic-only tests. The deployment is
+archived under
+`backups/deployments/tribute-hall-sense-type23-gap-positions-20260816/`. The build, archived DLL,
+and installed DLL are byte-identical at SHA-256
+`8534ce71b82a519ba7ed84ebca534f548116edd217a55e636c2e3a31578eb3b9`. The immediate rollback is
+the grouped-presence build at SHA-256
+`76b0ac3b51f37b0506eb629abd1ed61d38bf797d6631d36d5f75b1a1bac826dd`. Settings and build data
+were not changed; their SHA-256 values remain
+`746ca57fdaa3882b5a79e52eb846091485c22af80be9e01b27c775618af6ba10` and
+`bead2c68e79cc0facf93527c9d29c190dfe9e552d27f37f041444f39a7966a27`, respectively.
+
 The successful Moon control trace is preserved as
 `backups/deployments/tribute-hall-task9-origin-20260816/sunrise-moon-task9-origin.log` with SHA-256
 `b3351bc22a27fede6037e069887e705a94e3aa23f0e71bc960eed8cf229f91db`.

@@ -109,28 +109,40 @@ class Cursor final {
     return layout_result(parse_type_1_map(cursor, true), parse_type_1_map(cursor, false));
 }
 
-/** Walks schema 0x80804F47 with its six optional markers grouped ahead of field values. */
-[[nodiscard]] bool parse_type_23_map(Cursor cursor, bool recordPrefix) noexcept {
-    std::array<bool, 6> present{};
-    if (recordPrefix && !cursor.skip(1)) {
+/** Walks schema 0x80804F47 inline, inserting one opaque bit at the selected field boundary. */
+[[nodiscard]] bool parse_type_23_inline_gap(Cursor cursor, std::size_t gap) noexcept {
+    constexpr std::size_t kFieldCount = 6;
+    for (std::size_t field = 0; field < kFieldCount; ++field) {
+        if (gap == field && !cursor.skip(1)) {
+            return false;
+        }
+        bool present = false;
+        if (!cursor.presence(present) || (present && !cursor.skip(32))) {
+            return false;
+        }
+    }
+    if (gap == kFieldCount && !cursor.skip(1)) {
         return false;
     }
-    for (bool& fieldPresent : present) {
-        if (!cursor.presence(fieldPresent)) {
-            return false;
-        }
-    }
-    for (const bool fieldPresent : present) {
-        if (fieldPresent && !cursor.skip(32)) {
-            return false;
-        }
-    }
-    return (recordPrefix || cursor.skip(1)) && cursor.at_end();
+    return cursor.at_end();
 }
 
-/** Tests both bounded placements of the common record bit around the type-23 presence map. */
-[[nodiscard]] SenseSchemaValidation validate_type_23(const Cursor& cursor) noexcept {
-    return layout_result(parse_type_23_map(cursor, true), parse_type_23_map(cursor, false));
+/** Reports only which of the seven inline field boundaries close at the exact body end. */
+[[nodiscard]] SenseSchemaResult validate_type_23(const Cursor& cursor) noexcept {
+    SenseSchemaResult result{SenseSchemaValidation::mismatch, 0};
+    for (std::size_t gap = 0; gap <= 6; ++gap) {
+        if (parse_type_23_inline_gap(cursor, gap)) {
+            result.type23GapMask |= static_cast<std::uint8_t>(1U << gap);
+        }
+    }
+    if (result.type23GapMask == 0) {
+        return result;
+    }
+    const std::uint8_t withoutLowest = static_cast<std::uint8_t>(
+        result.type23GapMask & static_cast<std::uint8_t>(result.type23GapMask - 1U));
+    result.validation = withoutLowest == 0 ? SenseSchemaValidation::exact_inline_gap
+                                          : SenseSchemaValidation::exact_inline_gap_ambiguous;
+    return result;
 }
 
 /** Schema 0x8080992E remains opaque after its 100 fixed top-level bits. */
@@ -143,20 +155,20 @@ class Cursor final {
 
 } // namespace
 
-SenseSchemaValidation validate_sensor_sense_body(std::span<const std::byte> payload,
-                                                 std::size_t startBit,
-                                                 std::size_t bodyBits,
-                                                 std::uint8_t slotType) noexcept {
+SenseSchemaResult validate_sensor_sense_body(std::span<const std::byte> payload,
+                                             std::size_t startBit,
+                                             std::size_t bodyBits,
+                                             std::uint8_t slotType) noexcept {
     Cursor cursor(payload, startBit, bodyBits);
     switch (slotType) {
     case 1:
-        return validate_type_1(cursor);
+        return {validate_type_1(cursor), 0};
     case 4:
-        return validate_type_4(cursor);
+        return {validate_type_4(cursor), 0};
     case 23:
         return validate_type_23(cursor);
     default:
-        return SenseSchemaValidation::unsupported;
+        return {SenseSchemaValidation::unsupported, 0};
     }
 }
 
